@@ -101,20 +101,19 @@ describe('Orchestrator', () => {
   });
 
   test('does not overlap ticks', async () => {
-    let release!: () => void;
-    let tickStarted!: () => void;
-    const started = new Promise<void>((resolve) => { tickStarted = resolve; });
+    const releaseGate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
     const github = makeGithub([reviewRequest()]);
     github.listPersonalReviewRequests = async () => {
-      tickStarted();
-      await new Promise<void>((resolve) => { release = resolve; });
+      started.resolve();
+      await releaseGate.promise;
       return [];
     };
     const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state: new MemoryState(), dryRun: false });
     const first = orchestrator.runTick();
-    await started;
+    await started.promise;
     const second = await orchestrator.runTick();
-    release();
+    releaseGate.resolve();
     await first;
 
     expect(second.overlapped).toBe(true);
@@ -157,6 +156,50 @@ describe('Orchestrator', () => {
     expect(handled).toBe(true);
   });
 
+
+  test('logs PR review IO with finding counts, posted comments, and action', async () => {
+    const logs: unknown[] = [];
+    const github = makeGithub([reviewRequest()]);
+    const pi: PiPort = {
+      async review() {
+        return JSON.stringify({
+          findings: [
+            { severity: 'Critical', path: 'src/app.ts', line: 10, body: 'Critical issue.' },
+            { severity: 'Important', path: 'src/app.ts', line: 99, body: 'Important issue.' },
+            { severity: 'Suggestion', body: 'Suggestion.' },
+          ],
+        });
+      },
+    };
+
+    await new Orchestrator({
+      github,
+      pi,
+      state: new MemoryState(),
+      dryRun: false,
+      logger: { log: (line: string) => logs.push(JSON.parse(line)) },
+    }).runTick();
+
+    expect(logs).toEqual([
+      expect.objectContaining({
+        event: 'review_started',
+        repo: 'acme/a',
+        number: 1,
+        title: 'Test PR',
+        url: 'https://github.com/acme/a/pull/1',
+      }),
+      expect.objectContaining({
+        event: 'review_completed',
+        repo: 'acme/a',
+        number: 1,
+        critical: 1,
+        important: 1,
+        suggestions: 1,
+        commentsPosted: 1,
+        action: 'request_changes',
+      }),
+    ]);
+  });
   test('reviews pending requests concurrently up to the configured limit', async () => {
     const requests = [
       reviewRequest({ id: 'PR_1', number: 1 }),
