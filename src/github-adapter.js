@@ -83,10 +83,13 @@ query {
       this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/comments`),
       this.#getReviewThreads(owner, repo, request.number),
     ]);
+    const fallbackPatches = files.some((file) => typeof file.patch !== 'string')
+      ? await this.#getPullDiffPatches(owner, repo, request.number)
+      : new Map();
 
     return {
       pullRequest: request,
-      changedFiles: files.map((file) => buildChangedFile(file)),
+      changedFiles: files.map((file) => buildChangedFile(file, fallbackPatches)),
       issueComments: issueComments.map((comment) => ({ author: loginOrUnknown(comment.user), body: comment.body ?? '' })),
       reviews: reviews.map((review) => ({ author: loginOrUnknown(review.user), state: review.state ?? 'UNKNOWN', body: review.body ?? '' })),
       reviewComments: reviewComments.map((comment) => ({ author: loginOrUnknown(comment.user), path: comment.path, line: comment.line ?? comment.original_line, body: comment.body ?? '' })),
@@ -147,6 +150,11 @@ ${fileSections}
     const reviews = await this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`);
     const marker = reviewMarker(request);
     return reviews.some((review) => review.body?.includes(marker));
+  }
+
+  async #getPullDiffPatches(owner, repo, number) {
+    const diff = await this.execGh([`repos/${owner}/${repo}/pulls/${number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
+    return parseDiffPatches(diff);
   }
 
   async #getPaginatedJson(path) {
@@ -282,11 +290,45 @@ export function parseAddedLines(patch) {
   return additions;
 }
 
-function buildChangedFile(file) {
-  if (typeof file.patch !== 'string') {
-    throw new Error(`GitHub did not include a patch for ${file.filename}; refusing to review partial diff context`);
+function parseDiffPatches(diff) {
+  const patches = new Map();
+  let currentPath;
+  let currentLines = [];
+
+  const flush = () => {
+    if (currentPath && currentLines.length > 0) {
+      patches.set(currentPath, currentLines.join('\n'));
+    }
+  };
+
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      flush();
+      currentPath = undefined;
+      currentLines = [line];
+      continue;
+    }
+
+    if (currentLines.length === 0) {
+      continue;
+    }
+
+    currentLines.push(line);
+    if (line.startsWith('+++ b/')) {
+      currentPath = line.slice('+++ b/'.length);
+    }
   }
-  return { path: file.filename, patch: file.patch, additions: parseAddedLines(file.patch) };
+
+  flush();
+  return patches;
+}
+
+function buildChangedFile(file, fallbackPatches = new Map()) {
+  const patch = typeof file.patch === 'string' ? file.patch : fallbackPatches.get(file.filename);
+  if (typeof patch !== 'string') {
+    throw new Error(`GitHub did not include a patch for ${file.filename}; fallback pull diff did not include it`);
+  }
+  return { path: file.filename, patch, additions: parseAddedLines(patch) };
 }
 
 function bodyWithReviewMarker(body, request) {

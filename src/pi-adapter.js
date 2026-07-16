@@ -1,9 +1,10 @@
-import { DEFAULT_COMMAND_TIMEOUT_MS, runProcess } from './process-runner.js';
+import { runProcess } from './process-runner.js';
 
+export const DEFAULT_PI_TIMEOUT_MS = 30 * 60 * 1000;
 const PI_ARGS = ['--model', 'openai-codex/gpt-5.5', '--thinking', 'xhigh', '--no-session', '--print'];
 
 export class PiAdapter {
-  constructor({ run = runProcess, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
+  constructor({ run = runProcess, timeoutMs = DEFAULT_PI_TIMEOUT_MS } = {}) {
     this.run = run;
     this.timeoutMs = timeoutMs;
   }

@@ -333,12 +333,24 @@ describe('GitHubAdapter', () => {
     ]);
   });
 
-  test('fails closed when GitHub omits a file patch', async () => {
+  test('fetches the pull diff when GitHub omits a file patch from the files API', async () => {
+    const calls: string[][] = [];
     const adapter = new GitHubAdapter({
       execGh: async (args) => {
+        calls.push(args);
         const joined = args.join(' ');
         if (joined.includes('/pulls/10/files')) {
           return JSON.stringify([{ filename: 'src/large.ts', additions: 120 }]);
+        }
+        if (joined.includes('/pulls/10') && joined.includes('application/vnd.github.v3.diff')) {
+          return [
+            'diff --git a/src/large.ts b/src/large.ts',
+            'index 1111111..2222222 100644',
+            '--- a/src/large.ts',
+            '+++ b/src/large.ts',
+            '@@ -1 +1 @@',
+            '+const value = 1;',
+          ].join('\n');
         }
         if (args[0] === 'graphql') {
           return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
@@ -347,13 +359,17 @@ describe('GitHubAdapter', () => {
       },
     });
 
-    await expect(adapter.getReviewContext({
+    const context = await adapter.getReviewContext({
       id: 'PR_10',
       marker: '2026-07-16T13:00:00Z',
       number: 10,
       title: 'Missing patch PR',
       url: 'https://github.com/acme/a/pull/10',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
-    })).rejects.toThrow(/patch/i);
+    });
+
+    expect(context.changedFiles[0]?.patch).toContain('+const value = 1;');
+    expect(context.changedFiles[0]?.additions.has(1)).toBe(true);
+    expect(calls.some((args) => args.includes('Accept: application/vnd.github.v3.diff'))).toBe(true);
   });
 });
