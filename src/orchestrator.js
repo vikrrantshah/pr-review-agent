@@ -87,7 +87,12 @@ export class Orchestrator {
   }
 
   #log(event) {
-    this.logger.log(JSON.stringify({ timestamp: new Date().toISOString(), ...event }));
+    const payload = { timestamp: new Date().toISOString(), ...event };
+    if (typeof this.logger.logEvent === 'function') {
+      this.logger.logEvent(payload);
+      return;
+    }
+    this.logger.log(JSON.stringify(payload));
   }
 
   startPolling(intervalMs) {
