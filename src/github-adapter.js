@@ -87,9 +87,9 @@ query {
     return {
       pullRequest: request,
       changedFiles: files.map((file) => buildChangedFile(file)),
-      issueComments: issueComments.map((comment) => ({ author: comment.user?.login ?? 'unknown', body: comment.body ?? '' })),
-      reviews: reviews.map((review) => ({ author: review.user?.login ?? 'unknown', state: review.state ?? 'UNKNOWN', body: review.body ?? '' })),
-      reviewComments: reviewComments.map((comment) => ({ author: comment.user?.login ?? 'unknown', path: comment.path, line: comment.line ?? comment.original_line, body: comment.body ?? '' })),
+      issueComments: issueComments.map((comment) => ({ author: loginOrUnknown(comment.user), body: comment.body ?? '' })),
+      reviews: reviews.map((review) => ({ author: loginOrUnknown(review.user), state: review.state ?? 'UNKNOWN', body: review.body ?? '' })),
+      reviewComments: reviewComments.map((comment) => ({ author: loginOrUnknown(comment.user), path: comment.path, line: comment.line ?? comment.original_line, body: comment.body ?? '' })),
       reviewThreads,
     };
   }
@@ -223,7 +223,7 @@ query {
         path: thread.path,
         line: thread.line,
         isResolved: thread.isResolved,
-        comments: comments.map((comment) => ({ author: comment.author?.login ?? 'unknown', body: comment.body ?? '' })),
+        comments: comments.map((comment) => ({ author: loginOrUnknown(comment.author), body: comment.body ?? '' })),
       });
     }
 
@@ -299,6 +299,10 @@ function reviewMarker(request) {
 
 function isViewerUser(requestedReviewer, viewer) {
   return requestedReviewer?.__typename === 'User' && requestedReviewer.login === viewer;
+}
+
+function loginOrUnknown(user) {
+  return user?.login ?? 'unknown';
 }
 
 function formatEntries(entries, formatter) {

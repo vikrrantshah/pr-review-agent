@@ -41,10 +41,6 @@ export function runProcess(command, args, input, { timeoutMs = DEFAULT_COMMAND_T
         reject(new Error(`${command} exited with ${code}: ${stderr}`));
       }
     });
-    if (input !== undefined) {
-      child.stdin.end(input);
-    } else {
-      child.stdin.end();
-    }
+    child.stdin.end(input);
   });
 }
