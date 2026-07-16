@@ -156,4 +156,37 @@ describe('Orchestrator', () => {
     expect(github.submitted).toHaveLength(1);
     expect(handled).toBe(true);
   });
+
+  test('reviews pending requests concurrently up to the configured limit', async () => {
+    const requests = [
+      reviewRequest({ id: 'PR_1', number: 1 }),
+      reviewRequest({ id: 'PR_2', number: 2 }),
+      reviewRequest({ id: 'PR_3', number: 3 }),
+    ];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const github = makeGithub(requests);
+    github.getReviewContext = async (request) => ({
+      pullRequest: request,
+      changedFiles: [{ path: 'src/app.ts', additions: new Set([10]) }],
+      issueComments: [],
+      reviews: [],
+      reviewComments: [],
+      reviewThreads: [],
+    });
+    const pi: PiPort = {
+      async review() {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Promise.resolve();
+        inFlight -= 1;
+        return '{"findings":[]}';
+      },
+    };
+
+    const result = await new Orchestrator({ github, pi, state: new MemoryState(), dryRun: false, concurrency: 2 }).runTick();
+
+    expect(result.reviewed).toBe(3);
+    expect(maxInFlight).toBe(2);
+  });
 });

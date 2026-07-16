@@ -12,6 +12,7 @@ async function main() {
     pi: new PiAdapter(),
     state: new StateStore(),
     dryRun: options.dryRun,
+    concurrency: options.concurrency,
   });
 
   if (options.once) {
@@ -19,7 +20,7 @@ async function main() {
     console.log(JSON.stringify(summary));
   } else {
     orchestrator.startPolling(options.intervalMs);
-    console.log(`pr-review-agent polling every ${options.intervalMs}ms${options.dryRun ? ' (dry run)' : ''}`);
+    console.log(`pr-review-agent polling every ${options.intervalMs}ms with concurrency ${options.concurrency}${options.dryRun ? ' (dry run)' : ''}`);
   }
 }
 
@@ -31,7 +32,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 }
 
 export function parseArgs(args) {
-  const options = { once: false, dryRun: false, intervalMs: 60_000 };
+  const options = { once: false, dryRun: false, intervalMs: 60_000, concurrency: 3 };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--') {
@@ -47,6 +48,13 @@ export function parseArgs(args) {
         throw new Error('--interval-ms requires a positive integer');
       }
       options.intervalMs = value;
+      index += 1;
+    } else if (arg === '--concurrency') {
+      const value = Number(args[index + 1]);
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new Error('--concurrency requires a positive integer');
+      }
+      options.concurrency = value;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
