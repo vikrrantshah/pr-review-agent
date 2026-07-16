@@ -1,0 +1,23 @@
+{
+  "name": "pr-review-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "pr-review-agent": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "start": "node src/cli.js",
+    "start:dry-run": "node src/cli.js --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
