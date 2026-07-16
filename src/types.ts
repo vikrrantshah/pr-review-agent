@@ -53,6 +53,7 @@ export interface GitHubPort {
   getReviewContext(request: ReviewRequest): Promise<ReviewContext>;
   buildPrompt(context: ReviewContext): string;
   submitReview(request: ReviewRequest, decision: ReviewDecision): Promise<void>;
+  hasSubmittedReview?(request: ReviewRequest): Promise<boolean>;
 }
 
 export interface PiPort {

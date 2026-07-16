@@ -39,6 +39,11 @@ export class Orchestrator {
       }
 
       try {
+        if (!this.dryRun && this.github.hasSubmittedReview && await this.github.hasSubmittedReview(request)) {
+          await this.state.markHandled(request.id, request.marker);
+          summary.skipped += 1;
+          continue;
+        }
         const context = await this.github.getReviewContext(request);
         const prompt = this.github.buildPrompt(context);
         const result = parseReviewResult(await this.pi.review(prompt));

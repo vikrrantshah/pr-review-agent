@@ -119,4 +119,41 @@ describe('Orchestrator', () => {
 
     expect(second.overlapped).toBe(true);
   });
+
+  test('does not submit a duplicate review after submit succeeds but markHandled fails', async () => {
+    const request = reviewRequest();
+    let handled = false;
+    let markAttempts = 0;
+    const state: StatePort = {
+      async isHandled() {
+        return handled;
+      },
+      async markHandled() {
+        markAttempts += 1;
+        if (markAttempts === 1) {
+          throw new Error('state write failed');
+        }
+        handled = true;
+      },
+    };
+    let submittedReviewExists = false;
+    const github = Object.assign(makeGithub([request]), {
+      async hasSubmittedReview() {
+        return submittedReviewExists;
+      },
+    });
+    github.submitReview = async (_request, decision) => {
+      github.submitted.push(decision);
+      submittedReviewExists = true;
+    };
+    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state, dryRun: false });
+
+    const first = await orchestrator.runTick();
+    const second = await orchestrator.runTick();
+
+    expect(first.failed).toBe(1);
+    expect(second.skipped).toBe(1);
+    expect(github.submitted).toHaveLength(1);
+    expect(handled).toBe(true);
+  });
 });

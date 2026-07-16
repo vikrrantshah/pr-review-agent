@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { DEFAULT_COMMAND_TIMEOUT_MS, runProcess } from './process-runner.js';
 
 const REVIEW_REQUEST_QUERY = `
 query {
@@ -24,9 +24,11 @@ query {
   }
 }`;
 
+const REVIEW_MARKER_PREFIX = '<!-- pr-review-agent:';
+
 export class GitHubAdapter {
-  constructor({ execGh = defaultExecGh } = {}) {
-    this.execGh = execGh;
+  constructor({ execGh, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
+    this.execGh = execGh ?? ((args, input) => defaultExecGh(args, input, { timeoutMs }));
   }
 
   async listPersonalReviewRequests() {
@@ -59,16 +61,16 @@ export class GitHubAdapter {
   async getReviewContext(request) {
     const { owner, repo } = request.repository;
     const [files, issueComments, reviews, reviewComments, reviewThreads] = await Promise.all([
-      this.#getJson(`repos/${owner}/${repo}/pulls/${request.number}/files`),
-      this.#getJson(`repos/${owner}/${repo}/issues/${request.number}/comments`),
-      this.#getJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`),
-      this.#getJson(`repos/${owner}/${repo}/pulls/${request.number}/comments`),
+      this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/files`),
+      this.#getPaginatedJson(`repos/${owner}/${repo}/issues/${request.number}/comments`),
+      this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`),
+      this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/comments`),
       this.#getReviewThreads(owner, repo, request.number),
     ]);
 
     return {
       pullRequest: request,
-      changedFiles: files.map((file) => ({ path: file.filename, patch: file.patch ?? '', additions: parseAddedLines(file.patch ?? '') })),
+      changedFiles: files.map((file) => buildChangedFile(file)),
       issueComments: issueComments.map((comment) => ({ author: comment.user?.login ?? 'unknown', body: comment.body ?? '' })),
       reviews: reviews.map((review) => ({ author: review.user?.login ?? 'unknown', state: review.state ?? 'UNKNOWN', body: review.body ?? '' })),
       reviewComments: reviewComments.map((comment) => ({ author: comment.user?.login ?? 'unknown', path: comment.path, line: comment.line ?? comment.original_line, body: comment.body ?? '' })),
@@ -116,21 +118,37 @@ ${fileSections}
   }
 
   async submitReview(request, decision) {
+    if (await this.hasSubmittedReview(request)) {
+      return;
+    }
     const { owner, repo } = request.repository;
-    const body = JSON.stringify({ event: decision.event, body: decision.body, comments: decision.comments });
+    const body = JSON.stringify({ event: decision.event, body: bodyWithReviewMarker(decision.body, request), comments: decision.comments });
     await this.execGh([`repos/${owner}/${repo}/pulls/${request.number}/reviews`, '-X', 'POST', '--input', '-'], body);
   }
 
-  async #getJson(path) {
-    return JSON.parse(await this.execGh([path]));
+  async hasSubmittedReview(request) {
+    const { owner, repo } = request.repository;
+    const reviews = await this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`);
+    const marker = reviewMarker(request);
+    return reviews.some((review) => review.body?.includes(marker));
+  }
+
+  async #getPaginatedJson(path) {
+    const payload = JSON.parse(await this.execGh([path, '--paginate', '--slurp']));
+    return payload.every(Array.isArray) ? payload.flat() : payload;
   }
 
   async #getReviewThreads(owner, repo, number) {
-    const query = `
+    const nodes = [];
+    let cursor;
+    while (true) {
+      const after = cursor ? `, after: "${escapeGraphql(cursor)}"` : '';
+      const query = `
 query {
   repository(owner: "${escapeGraphql(owner)}", name: "${escapeGraphql(repo)}") {
     pullRequest(number: ${number}) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100${after}) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           isResolved
           path
@@ -141,8 +159,15 @@ query {
     }
   }
 }`;
-    const payload = JSON.parse(await this.execGh(['graphql'], query));
-    const nodes = payload.data.repository.pullRequest.reviewThreads.nodes;
+      const payload = JSON.parse(await this.execGh(['graphql'], query));
+      const connection = payload.data.repository.pullRequest.reviewThreads;
+      nodes.push(...connection.nodes);
+      if (!connection.pageInfo?.hasNextPage) {
+        break;
+      }
+      cursor = connection.pageInfo.endCursor;
+    }
+
     return nodes.map((thread) => ({
       path: thread.path,
       line: thread.line,
@@ -178,6 +203,21 @@ export function parseAddedLines(patch) {
   return additions;
 }
 
+function buildChangedFile(file) {
+  if (typeof file.patch !== 'string') {
+    throw new Error(`GitHub did not include a patch for ${file.filename}; refusing to review partial diff context`);
+  }
+  return { path: file.filename, patch: file.patch, additions: parseAddedLines(file.patch) };
+}
+
+function bodyWithReviewMarker(body, request) {
+  return `${body}\n\n${reviewMarker(request)}`;
+}
+
+function reviewMarker(request) {
+  return `${REVIEW_MARKER_PREFIX}${request.id}:${request.marker} -->`;
+}
+
 function isViewerUser(requestedReviewer, viewer) {
   return requestedReviewer?.__typename === 'User' && requestedReviewer.login === viewer;
 }
@@ -193,34 +233,8 @@ function escapeGraphql(value) {
   return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 }
 
-function defaultExecGh(args, input) {
+function defaultExecGh(args, input, { timeoutMs }) {
   const ghArgs = args[0] === 'graphql' ? ['api', 'graphql', '-f', `query=${input ?? ''}`] : ['api', ...args];
   const stdin = args[0] === 'graphql' ? undefined : input;
-  return runProcess('gh', ghArgs, stdin);
-}
-
-function runProcess(command, args, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout);
-      } else {
-        reject(new Error(`${command} exited with ${code}: ${stderr}`));
-      }
-    });
-    if (input) {
-      child.stdin.end(input);
-    } else {
-      child.stdin.end();
-    }
-  });
+  return runProcess('gh', ghArgs, stdin, { timeoutMs });
 }

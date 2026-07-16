@@ -108,4 +108,117 @@ describe('GitHubAdapter', () => {
     expect(context.changedFiles[0]?.additions.has(1)).toBe(true);
     expect(calls.length).toBe(5);
   });
+
+  test('fetches every REST page for pull request context', async () => {
+    const calls: string[][] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (args) => {
+        calls.push(args);
+        const joined = args.join(' ');
+        if (joined.includes('/pulls/8/files')) {
+          return JSON.stringify([
+            [{ filename: 'src/first.ts', patch: '@@ -1 +1 @@\n+first();', additions: 1 }],
+            [{ filename: 'src/second.ts', patch: '@@ -2 +2 @@\n+second();', additions: 1 }],
+          ]);
+        }
+        if (joined.includes('/issues/8/comments')) {
+          return JSON.stringify([
+            [{ user: { login: 'alice' }, body: 'first issue page' }],
+            [{ user: { login: 'bob' }, body: 'second issue page' }],
+          ]);
+        }
+        if (joined.includes('/pulls/8/reviews')) {
+          return JSON.stringify([
+            [{ user: { login: 'carol' }, state: 'COMMENTED', body: 'first review page' }],
+            [{ user: { login: 'dave' }, state: 'APPROVED', body: 'second review page' }],
+          ]);
+        }
+        if (joined.includes('/pulls/8/comments')) {
+          return JSON.stringify([
+            [{ user: { login: 'erin' }, path: 'src/first.ts', line: 1, body: 'first inline page' }],
+            [{ user: { login: 'frank' }, path: 'src/second.ts', line: 2, body: 'second inline page' }],
+          ]);
+        }
+        if (args[0] === 'graphql') {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
+        }
+        throw new Error(`Unexpected gh call: ${joined}`);
+      },
+    });
+
+    const context = await adapter.getReviewContext({
+      id: 'PR_8',
+      marker: '2026-07-16T11:00:00Z',
+      number: 8,
+      title: 'Paginated context PR',
+      url: 'https://github.com/acme/a/pull/8',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    });
+
+    expect(context.changedFiles.map((file) => file.path)).toEqual(['src/first.ts', 'src/second.ts']);
+    expect(context.issueComments.map((comment) => comment.body)).toEqual(['first issue page', 'second issue page']);
+    expect(context.reviews.map((review) => review.body)).toEqual(['first review page', 'second review page']);
+    expect(context.reviewComments.map((comment) => comment.body)).toEqual(['first inline page', 'second inline page']);
+    const restCalls = calls.filter((args) => args[0] !== 'graphql');
+    expect(restCalls).toHaveLength(4);
+    expect(restCalls.every((args) => args.includes('--paginate') && args.includes('--slurp'))).toBe(true);
+  });
+
+  test('fetches every GraphQL review-thread page', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (args, input) => {
+        if (args[0] !== 'graphql') {
+          return JSON.stringify([]);
+        }
+        graphqlInputs.push(input ?? '');
+        if (!input?.includes('after: "cursor-1"')) {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+            pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+            nodes: [{ isResolved: false, path: 'src/first.ts', line: 1, comments: { nodes: [{ author: { login: 'alice' }, body: 'first thread' }] } }],
+          } } } } });
+        }
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [{ isResolved: true, path: 'src/second.ts', line: 2, comments: { nodes: [{ author: { login: 'bob' }, body: 'second thread' }] } }],
+        } } } } });
+      },
+    });
+
+    const context = await adapter.getReviewContext({
+      id: 'PR_9',
+      marker: '2026-07-16T12:00:00Z',
+      number: 9,
+      title: 'Thread pagination PR',
+      url: 'https://github.com/acme/a/pull/9',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    });
+
+    expect(graphqlInputs).toHaveLength(2);
+    expect(context.reviewThreads.map((thread) => thread.comments[0]?.body)).toEqual(['first thread', 'second thread']);
+  });
+
+  test('fails closed when GitHub omits a file patch', async () => {
+    const adapter = new GitHubAdapter({
+      execGh: async (args) => {
+        const joined = args.join(' ');
+        if (joined.includes('/pulls/10/files')) {
+          return JSON.stringify([{ filename: 'src/large.ts', additions: 120 }]);
+        }
+        if (args[0] === 'graphql') {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
+        }
+        return JSON.stringify([]);
+      },
+    });
+
+    await expect(adapter.getReviewContext({
+      id: 'PR_10',
+      marker: '2026-07-16T13:00:00Z',
+      number: 10,
+      title: 'Missing patch PR',
+      url: 'https://github.com/acme/a/pull/10',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    })).rejects.toThrow(/patch/i);
+  });
 });
