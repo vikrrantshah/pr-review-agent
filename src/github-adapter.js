@@ -1,9 +1,24 @@
 import { DEFAULT_COMMAND_TIMEOUT_MS, runProcess } from './process-runner.js';
 
-const REVIEW_REQUEST_QUERY = `
+const REVIEW_MARKER_PREFIX = '<!-- pr-review-agent:';
+
+export class GitHubAdapter {
+  constructor({ execGh, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
+    this.execGh = execGh ?? ((args, input) => defaultExecGh(args, input, { timeoutMs }));
+  }
+
+  async listPersonalReviewRequests() {
+    const nodes = [];
+    let viewer;
+    let cursor;
+
+    while (true) {
+      const after = cursor ? `, after: "${escapeGraphql(cursor)}"` : '';
+      const query = `
 query {
   viewer { login }
-  search(query: "review-requested:@me is:open is:pr archived:false", type: ISSUE, first: 100) {
+  search(query: "review-requested:@me is:open is:pr archived:false", type: ISSUE, first: 100${after}) {
+    pageInfo { hasNextPage endCursor }
     nodes {
       __typename
       ... on PullRequest {
@@ -13,7 +28,8 @@ query {
         url
         repository { name nameWithOwner owner { login } }
         reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
-        timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+        timelineItems(first: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             __typename
             ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
@@ -23,39 +39,39 @@ query {
     }
   }
 }`;
+      const payload = JSON.parse(await this.execGh(['graphql'], query));
+      viewer ??= payload.data.viewer.login;
+      nodes.push(...payload.data.search.nodes.filter((node) => node.__typename === 'PullRequest'));
 
-const REVIEW_MARKER_PREFIX = '<!-- pr-review-agent:';
+      if (!payload.data.search.pageInfo?.hasNextPage) {
+        break;
+      }
+      cursor = payload.data.search.pageInfo.endCursor;
+    }
 
-export class GitHubAdapter {
-  constructor({ execGh, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
-    this.execGh = execGh ?? ((args, input) => defaultExecGh(args, input, { timeoutMs }));
-  }
-
-  async listPersonalReviewRequests() {
-    const payload = JSON.parse(await this.execGh(['graphql'], REVIEW_REQUEST_QUERY));
-    const viewer = payload.data.viewer.login;
-    const nodes = payload.data.search.nodes.filter((node) => node.__typename === 'PullRequest');
-
-    return nodes.flatMap((node) => {
+    const requests = [];
+    for (const node of nodes) {
       const hasDirectOpenRequest = node.reviewRequests.nodes.some((request) => isViewerUser(request.requestedReviewer, viewer));
-      const directEvents = node.timelineItems.nodes
+      const directEvents = (await this.#getReviewRequestTimelineEvents(node))
         .filter((event) => event.__typename === 'ReviewRequestedEvent' && isViewerUser(event.requestedReviewer, viewer))
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
       if (!hasDirectOpenRequest || directEvents.length === 0) {
-        return [];
+        continue;
       }
 
       const repo = node.repository;
-      return [{
+      requests.push({
         id: node.id,
         marker: directEvents.at(-1).createdAt,
         number: node.number,
         title: node.title,
         url: node.url,
         repository: { owner: repo.owner.login, repo: repo.name, nameWithOwner: repo.nameWithOwner },
-      }];
-    });
+      });
+    }
+
+    return requests;
   }
 
   async getReviewContext(request) {
@@ -138,6 +154,34 @@ ${fileSections}
     return payload.every(Array.isArray) ? payload.flat() : payload;
   }
 
+  async #getReviewRequestTimelineEvents(node) {
+    const events = [...node.timelineItems.nodes];
+    let cursor = node.timelineItems.pageInfo?.endCursor;
+
+    while (node.timelineItems.pageInfo?.hasNextPage) {
+      const query = `
+query {
+  node(id: "${escapeGraphql(node.id)}") {
+    ... on PullRequest {
+      timelineItems(first: 100, after: "${escapeGraphql(cursor)}", itemTypes: [REVIEW_REQUESTED_EVENT]) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          __typename
+          ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+        }
+      }
+    }
+  }
+}`;
+      const payload = JSON.parse(await this.execGh(['graphql'], query));
+      node.timelineItems = payload.data.node.timelineItems;
+      events.push(...node.timelineItems.nodes);
+      cursor = node.timelineItems.pageInfo?.endCursor;
+    }
+
+    return events;
+  }
+
   async #getReviewThreads(owner, repo, number) {
     const nodes = [];
     let cursor;
@@ -150,10 +194,14 @@ query {
       reviewThreads(first: 100${after}) {
         pageInfo { hasNextPage endCursor }
         nodes {
+          id
           isResolved
           path
           line
-          comments(first: 100) { nodes { author { login } body } }
+          comments(first: 100) {
+            pageInfo { hasNextPage endCursor }
+            nodes { author { login } body }
+          }
         }
       }
     }
@@ -168,12 +216,43 @@ query {
       cursor = connection.pageInfo.endCursor;
     }
 
-    return nodes.map((thread) => ({
-      path: thread.path,
-      line: thread.line,
-      isResolved: thread.isResolved,
-      comments: thread.comments.nodes.map((comment) => ({ author: comment.author?.login ?? 'unknown', body: comment.body ?? '' })),
-    }));
+    const threads = [];
+    for (const thread of nodes) {
+      const comments = await this.#getReviewThreadComments(thread);
+      threads.push({
+        path: thread.path,
+        line: thread.line,
+        isResolved: thread.isResolved,
+        comments: comments.map((comment) => ({ author: comment.author?.login ?? 'unknown', body: comment.body ?? '' })),
+      });
+    }
+
+    return threads;
+  }
+
+  async #getReviewThreadComments(thread) {
+    const comments = [...thread.comments.nodes];
+    let cursor = thread.comments.pageInfo?.endCursor;
+
+    while (thread.comments.pageInfo?.hasNextPage) {
+      const query = `
+query {
+  node(id: "${escapeGraphql(thread.id)}") {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: "${escapeGraphql(cursor)}") {
+        pageInfo { hasNextPage endCursor }
+        nodes { author { login } body }
+      }
+    }
+  }
+}`;
+      const payload = JSON.parse(await this.execGh(['graphql'], query));
+      thread.comments = payload.data.node.comments;
+      comments.push(...thread.comments.nodes);
+      cursor = thread.comments.pageInfo?.endCursor;
+    }
+
+    return comments;
   }
 }
 

@@ -60,6 +60,93 @@ describe('GitHubAdapter', () => {
     expect(requests.map((request) => request.marker)).toEqual(['2026-07-15T10:00:00Z', '2026-07-16T09:00:00Z']);
   });
 
+  test('fetches every GraphQL search page for personal review requests', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (_args, input) => {
+        graphqlInputs.push(input ?? '');
+        const secondPage = input?.includes('after: "search-cursor-1"');
+        return JSON.stringify({
+          data: {
+            viewer: { login: 'vikrant' },
+            search: {
+              pageInfo: { hasNextPage: !secondPage, endCursor: secondPage ? null : 'search-cursor-1' },
+              nodes: [
+                {
+                  __typename: 'PullRequest',
+                  id: secondPage ? 'PR_second_page' : 'PR_first_page',
+                  number: secondPage ? 2 : 1,
+                  title: secondPage ? 'Second page' : 'First page',
+                  url: `https://github.com/acme/repo/pull/${secondPage ? 2 : 1}`,
+                  repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
+                  reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                  timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+                    { __typename: 'ReviewRequestedEvent', createdAt: secondPage ? '2026-07-16T10:00:00Z' : '2026-07-15T10:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                  ] },
+                },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(graphqlInputs).toHaveLength(2);
+    expect(graphqlInputs[1]).toContain('after: "search-cursor-1"');
+    expect(requests.map((request) => request.id)).toEqual(['PR_first_page', 'PR_second_page']);
+  });
+
+  test('uses paginated timeline events to select the current personal review marker', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (_args, input) => {
+        graphqlInputs.push(input ?? '');
+        if (input?.includes('after: "timeline-cursor-1"')) {
+          return JSON.stringify({ data: { node: { timelineItems: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              { __typename: 'ReviewRequestedEvent', createdAt: '2026-07-16T10:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+            ],
+          } } } });
+        }
+        return JSON.stringify({
+          data: {
+            viewer: { login: 'vikrant' },
+            search: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                {
+                  __typename: 'PullRequest',
+                  id: 'PR_marker',
+                  number: 11,
+                  title: 'Marker PR',
+                  url: 'https://github.com/acme/repo/pull/11',
+                  repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
+                  reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                  timelineItems: {
+                    pageInfo: { hasNextPage: true, endCursor: 'timeline-cursor-1' },
+                    nodes: [
+                      { __typename: 'ReviewRequestedEvent', createdAt: '2026-07-01T10:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(graphqlInputs).toHaveLength(2);
+    expect(graphqlInputs[1]).toContain('PR_marker');
+    expect(graphqlInputs[1]).toContain('after: "timeline-cursor-1"');
+    expect(requests[0]?.marker).toBe('2026-07-16T10:00:00Z');
+  });
+
   test('builds a prompt context containing comments, reviews, and review-thread replies', async () => {
     const calls: string[][] = [];
     const adapter = new GitHubAdapter({
@@ -196,6 +283,54 @@ describe('GitHubAdapter', () => {
 
     expect(graphqlInputs).toHaveLength(2);
     expect(context.reviewThreads.map((thread) => thread.comments[0]?.body)).toEqual(['first thread', 'second thread']);
+  });
+
+  test('fetches every GraphQL review-thread comment page', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (args, input) => {
+        if (args[0] !== 'graphql') {
+          return JSON.stringify([]);
+        }
+        graphqlInputs.push(input ?? '');
+        if (input?.includes('after: "comment-cursor-1"')) {
+          return JSON.stringify({ data: { node: { comments: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [{ author: { login: 'bob' }, body: 'comment after first 100' }],
+          } } } });
+        }
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [{
+            id: 'THREAD_1',
+            isResolved: false,
+            path: 'src/app.ts',
+            line: 1,
+            comments: {
+              pageInfo: { hasNextPage: true, endCursor: 'comment-cursor-1' },
+              nodes: [{ author: { login: 'alice' }, body: 'comment from first 100' }],
+            },
+          }],
+        } } } } });
+      },
+    });
+
+    const context = await adapter.getReviewContext({
+      id: 'PR_12',
+      marker: '2026-07-16T14:00:00Z',
+      number: 12,
+      title: 'Thread comment pagination PR',
+      url: 'https://github.com/acme/a/pull/12',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    });
+
+    expect(graphqlInputs).toHaveLength(2);
+    expect(graphqlInputs[1]).toContain('THREAD_1');
+    expect(graphqlInputs[1]).toContain('after: "comment-cursor-1"');
+    expect(context.reviewThreads[0]?.comments.map((comment) => comment.body)).toEqual([
+      'comment from first 100',
+      'comment after first 100',
+    ]);
   });
 
   test('fails closed when GitHub omits a file patch', async () => {
