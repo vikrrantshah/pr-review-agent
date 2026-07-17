@@ -17,6 +17,7 @@ describe('GitHubAdapter', () => {
                   number: 1,
                   title: 'Personal A',
                   url: 'https://github.com/acme/a/pull/1',
+                  headRefOid: 'head-a',
                   repository: { owner: { login: 'acme' }, name: 'a', nameWithOwner: 'acme/a' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: { nodes: [
@@ -41,6 +42,7 @@ describe('GitHubAdapter', () => {
                   number: 3,
                   title: 'Personal B',
                   url: 'https://github.com/other/c/pull/3',
+                  headRefOid: 'head-b',
                   repository: { owner: { login: 'other' }, name: 'c', nameWithOwner: 'other/c' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: { nodes: [
@@ -57,7 +59,7 @@ describe('GitHubAdapter', () => {
     const requests = await adapter.listPersonalReviewRequests();
 
     expect(requests.map((request) => request.repository.nameWithOwner)).toEqual(['acme/a', 'other/c']);
-    expect(requests.map((request) => request.marker)).toEqual(['2026-07-15T10:00:00Z', '2026-07-16T09:00:00Z']);
+    expect(requests.map((request) => request.marker)).toEqual(['2026-07-15T10:00:00Z:head-a', '2026-07-16T09:00:00Z:head-b']);
   });
 
   test('fetches every GraphQL search page for personal review requests', async () => {
@@ -107,7 +109,7 @@ describe('GitHubAdapter', () => {
           return JSON.stringify({ data: { node: { timelineItems: {
             pageInfo: { hasNextPage: false, endCursor: null },
             nodes: [
-              { __typename: 'ReviewRequestedEvent', createdAt: '2026-07-16T10:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+              { __typename: 'ReviewRequestedEvent', id: 'timeline-event-2', createdAt: '2026-07-16T10:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
             ],
           } } } });
         }
@@ -123,6 +125,7 @@ describe('GitHubAdapter', () => {
                   number: 11,
                   title: 'Marker PR',
                   url: 'https://github.com/acme/repo/pull/11',
+                  headRefOid: 'head-marker',
                   repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: {
@@ -144,7 +147,43 @@ describe('GitHubAdapter', () => {
     expect(graphqlInputs).toHaveLength(2);
     expect(graphqlInputs[1]).toContain('PR_marker');
     expect(graphqlInputs[1]).toContain('after: "timeline-cursor-1"');
-    expect(requests[0]?.marker).toBe('2026-07-16T10:00:00Z');
+    expect(requests[0]?.marker).toBe('timeline-event-2:head-marker');
+  });
+
+  test('uses the request event id and current head as the review marker', async () => {
+    const adapter = new GitHubAdapter({
+      execGh: async () => JSON.stringify({
+        data: {
+          viewer: { login: 'vikrant' },
+          search: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                __typename: 'PullRequest',
+                id: 'PR_re_review',
+                number: 12,
+                title: 'Re-review PR',
+                url: 'https://github.com/acme/repo/pull/12',
+                headRefOid: 'head-after-fix',
+                repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
+                reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                timelineItems: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    { __typename: 'ReviewRequestedEvent', id: 'request-before-fix', createdAt: '2026-07-17T09:16:05Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                    { __typename: 'ReviewRequestedEvent', id: 'request-after-fix', createdAt: '2026-07-17T09:16:05Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(requests[0]?.marker).toBe('request-after-fix:head-after-fix');
   });
 
   test('builds a prompt context containing comments, reviews, and review-thread replies', async () => {

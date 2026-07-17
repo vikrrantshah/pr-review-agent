@@ -26,13 +26,14 @@ query {
         number
         title
         url
+        headRefOid
         repository { name nameWithOwner owner { login } }
         reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
         timelineItems(first: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) {
           pageInfo { hasNextPage endCursor }
           nodes {
             __typename
-            ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+            ... on ReviewRequestedEvent { id createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
           }
         }
       }
@@ -63,7 +64,7 @@ query {
       const repo = node.repository;
       requests.push({
         id: node.id,
-        marker: directEvents.at(-1).createdAt,
+        marker: reviewRequestMarker(directEvents.at(-1), node),
         number: node.number,
         title: node.title,
         url: node.url,
@@ -175,7 +176,7 @@ query {
         pageInfo { hasNextPage endCursor }
         nodes {
           __typename
-          ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+          ... on ReviewRequestedEvent { id createdAt requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
         }
       }
     }
@@ -337,6 +338,12 @@ function bodyWithReviewMarker(body, request) {
 
 function reviewMarker(request) {
   return `${REVIEW_MARKER_PREFIX}${request.id}:${request.marker} -->`;
+}
+
+function reviewRequestMarker(event, pullRequest) {
+  const eventPart = event.id ?? event.createdAt;
+  const headPart = pullRequest.headRefOid ?? 'unknown-head';
+  return `${eventPart}:${headPart}`;
 }
 
 function isViewerUser(requestedReviewer, viewer) {
