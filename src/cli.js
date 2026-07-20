@@ -11,7 +11,7 @@ async function main() {
   const logger = createLogger({ format: options.logFormat, color: process.stdout.isTTY });
   const orchestrator = new Orchestrator({
     github: new GitHubAdapter(),
-    pi: new PiAdapter(),
+    pi: new PiAdapter({ model: options.piModel, thinking: options.piThinking }),
     state: new StateStore(),
     dryRun: options.dryRun,
     concurrency: options.concurrency,
@@ -65,6 +65,20 @@ export function parseArgs(args) {
         throw new Error('--log-format requires pretty or json');
       }
       options.logFormat = value;
+      index += 1;
+    } else if (arg === '--pi-model') {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error('--pi-model requires a model name');
+      }
+      options.piModel = value;
+      index += 1;
+    } else if (arg === '--pi-thinking') {
+      const value = args[index + 1];
+      if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value)) {
+        throw new Error('--pi-thinking requires off, minimal, low, medium, high, xhigh, or max');
+      }
+      options.piThinking = value;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);

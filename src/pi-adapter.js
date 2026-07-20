@@ -1,16 +1,39 @@
 import { runProcess } from './process-runner.js';
 
 export const DEFAULT_PI_TIMEOUT_MS = 30 * 60 * 1000;
-const PI_ARGS = ['--model', 'openai-codex/gpt-5.5', '--thinking', 'xhigh', '--no-session', '--print'];
+export const DEFAULT_PI_MODEL = 'openai-codex/gpt-5.5';
+export const DEFAULT_PI_THINKING = 'xhigh';
+const MODEL_ENV = 'PR_REVIEW_AGENT_PI_MODEL';
+const THINKING_ENV = 'PR_REVIEW_AGENT_PI_THINKING';
 
 export class PiAdapter {
-  constructor({ run = runProcess, timeoutMs = DEFAULT_PI_TIMEOUT_MS } = {}) {
+  constructor({
+    run = runProcess,
+    timeoutMs = DEFAULT_PI_TIMEOUT_MS,
+    model = configuredValue(process.env[MODEL_ENV], DEFAULT_PI_MODEL),
+    thinking = configuredValue(process.env[THINKING_ENV], DEFAULT_PI_THINKING),
+  } = {}) {
     this.run = run;
     this.timeoutMs = timeoutMs;
+    this.model = model;
+    this.thinking = thinking;
   }
 
   async review(prompt) {
-    return this.run('pi', PI_ARGS, prompt, { timeoutMs: this.timeoutMs });
+    return this.run('pi', this.#args(), prompt, { timeoutMs: this.timeoutMs });
   }
+
+  #args() {
+    const args = ['--model', this.model];
+    if (this.thinking) {
+      args.push('--thinking', this.thinking);
+    }
+    args.push('--no-session', '--print');
+    return args;
+  }
+}
+
+function configuredValue(value, fallback) {
+  return value?.trim() ? value : fallback;
 }
 
