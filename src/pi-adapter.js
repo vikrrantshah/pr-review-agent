@@ -1,6 +1,6 @@
 import { runProcess } from './process-runner.js';
 
-export const DEFAULT_PI_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_PI_TIMEOUT_MS = 60 * 60 * 1000;
 export const DEFAULT_PI_MODEL = 'openai-codex/gpt-5.5';
 export const DEFAULT_PI_THINKING = 'xhigh';
 const MODEL_ENV = 'PR_REVIEW_AGENT_PI_MODEL';

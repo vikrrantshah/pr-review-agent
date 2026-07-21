@@ -21,7 +21,7 @@ describe('PiAdapter', () => {
         command: 'pi',
         args: ['--model', 'openai-codex/gpt-5.5', '--thinking', 'xhigh', '--no-session', '--print'],
         input: 'prompt text',
-        timeoutMs: 30 * 60 * 1000,
+        timeoutMs: 60 * 60 * 1000,
       },
     ]);
   });
