@@ -59,6 +59,7 @@ export function formatSummary(summary) {
 export function formatPrettyEvent(event, { color = false } = {}) {
   if (event.event === 'review_started') {
     return card(formatHeading(`REVIEWING ${prLabel(event)}`, 'cyan', color), [
+      ...timeLines('Started', event.timestamp),
       `Title: ${event.title}`,
       `URL:   ${event.url}`,
     ]);
@@ -66,6 +67,7 @@ export function formatPrettyEvent(event, { color = false } = {}) {
 
   if (event.event === 'review_completed') {
     return card(formatHeading(`${ACTION_LABELS[event.action] ?? event.action.toUpperCase()} ${prLabel(event)}`, actionColor(event.action), color), [
+      ...timeLines(completionTimeLabel(event.action), event.timestamp),
       `Title: ${event.title}`,
       `Critical: ${event.critical}`,
       `Important: ${event.important}`,
@@ -109,6 +111,30 @@ function card(title, lines) {
 
 function actionColor(action) {
   return action === 'approved' || action === 'would_approve' ? 'green' : 'yellow';
+}
+
+function timeLines(label, timestamp) {
+  return timestamp ? [`${label}: ${formatPrettyTime(timestamp)}`] : [];
+}
+
+function formatPrettyTime(timestamp) {
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  }).format(new Date(timestamp));
+}
+
+function completionTimeLabel(action) {
+  if (action === 'request_changes') return 'Requested changes';
+  if (action === 'would_approve') return 'Would approve';
+  if (action === 'would_request_changes') return 'Would request changes';
+  return 'Approved';
 }
 
 function formatHeading(text, colorName, enabled) {

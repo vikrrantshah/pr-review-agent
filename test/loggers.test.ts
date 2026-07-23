@@ -13,6 +13,7 @@ describe('pretty logger', () => {
     });
 
     expect(output).toContain('REVIEWING acme/a#42');
+    expect(output).toContain('Started: Jul 16, 2026, 12:30:21 PM UTC');
     expect(output).toContain('Title: Fix checkout flow');
     expect(output).toContain('URL:   https://github.com/acme/a/pull/42');
   });
@@ -33,10 +34,29 @@ describe('pretty logger', () => {
     });
 
     expect(output).toContain('REQUEST CHANGES acme/a#42');
+    expect(output).toContain('Requested changes: Jul 16, 2026, 12:35:21 PM UTC');
     expect(output).toContain('Critical: 1');
     expect(output).toContain('Important: 2');
     expect(output).toContain('Suggestions: 3');
     expect(output).toContain('Comments posted: 4');
+  });
+
+  test('renders approval time with the approved label', () => {
+    const output = formatPrettyEvent({
+      timestamp: '2026-07-16T12:40:21.729Z',
+      event: 'review_completed',
+      repo: 'acme/a',
+      number: 42,
+      title: 'Fix checkout flow',
+      url: 'https://github.com/acme/a/pull/42',
+      critical: 0,
+      important: 0,
+      suggestions: 0,
+      commentsPosted: 0,
+      action: 'approved',
+    });
+
+    expect(output).toContain('Approved: Jul 16, 2026, 12:40:21 PM UTC');
   });
 
   test('renders startup and tick summaries', () => {
