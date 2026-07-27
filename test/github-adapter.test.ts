@@ -230,15 +230,12 @@ describe('GitHubAdapter', () => {
     expect(requests[0]?.marker).toBe('request-after-fix:head-after-fix');
   });
 
-  test('builds a prompt context containing comments, reviews, and review-thread replies', async () => {
+  test('gets review metadata without fetching PR files', async () => {
     const calls: string[][] = [];
     const adapter = new GitHubAdapter({
       execGh: async (args) => {
         calls.push(args);
         const joined = args.join(' ');
-        if (joined.includes('/pulls/7/files')) {
-          return JSON.stringify([{ filename: 'src/app.ts', patch: '@@ -1 +1 @@\n+const value = 1;', additions: 1 }]);
-        }
         if (joined.includes('/issues/7/comments')) {
           return JSON.stringify([{ user: { login: 'alice' }, body: 'Issue comment context' }]);
         }
@@ -256,7 +253,7 @@ describe('GitHubAdapter', () => {
             ] } },
           ] } } } } });
         }
-        throw new Error(`Unexpected gh call: ${joined}`);
+        return JSON.stringify([]);
       },
     });
 
@@ -276,22 +273,16 @@ describe('GitHubAdapter', () => {
     expect(prompt).toContain('Inline review comment context');
     expect(prompt).toContain('Thread root context');
     expect(prompt).toContain('Thread reply context');
-    expect(context.changedFiles[0]?.additions.has(1)).toBe(true);
-    expect(calls.length).toBe(5);
+    expect(context.changedFiles).toEqual([]);
+    expect(calls.some((args) => args.join(' ').includes('/pulls/7/files'))).toBe(false);
   });
 
-  test('fetches every REST page for pull request context', async () => {
+  test('fetches every REST page for pull request metadata', async () => {
     const calls: string[][] = [];
     const adapter = new GitHubAdapter({
       execGh: async (args) => {
         calls.push(args);
         const joined = args.join(' ');
-        if (joined.includes('/pulls/8/files')) {
-          return JSON.stringify([
-            [{ filename: 'src/first.ts', patch: '@@ -1 +1 @@\n+first();', additions: 1 }],
-            [{ filename: 'src/second.ts', patch: '@@ -2 +2 @@\n+second();', additions: 1 }],
-          ]);
-        }
         if (joined.includes('/issues/8/comments')) {
           return JSON.stringify([
             [{ user: { login: 'alice' }, body: 'first issue page' }],
@@ -313,7 +304,7 @@ describe('GitHubAdapter', () => {
         if (args[0] === 'graphql') {
           return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
         }
-        throw new Error(`Unexpected gh call: ${joined}`);
+        return JSON.stringify([]);
       },
     });
 
@@ -327,13 +318,14 @@ describe('GitHubAdapter', () => {
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
-    expect(context.changedFiles.map((file) => file.path)).toEqual(['src/first.ts', 'src/second.ts']);
+    expect(context.changedFiles).toEqual([]);
     expect(context.issueComments.map((comment) => comment.body)).toEqual(['first issue page', 'second issue page']);
     expect(context.reviews.map((review) => review.body)).toEqual(['first review page', 'second review page']);
     expect(context.reviewComments.map((comment) => comment.body)).toEqual(['first inline page', 'second inline page']);
     const restCalls = calls.filter((args) => args[0] !== 'graphql');
-    expect(restCalls).toHaveLength(4);
+    expect(restCalls).toHaveLength(3);
     expect(restCalls.every((args) => args.includes('--paginate') && args.includes('--slurp'))).toBe(true);
+    expect(restCalls.some((args) => args[0].includes('/pulls/8/files'))).toBe(false);
   });
 
   test('fetches every GraphQL review-thread page', async () => {
@@ -420,107 +412,4 @@ describe('GitHubAdapter', () => {
     ]);
   });
 
-  test('fetches the pull diff when GitHub omits a file patch from the files API', async () => {
-    const calls: string[][] = [];
-    const adapter = new GitHubAdapter({
-      execGh: async (args) => {
-        calls.push(args);
-        const joined = args.join(' ');
-        if (joined.includes('/pulls/10/files')) {
-          return JSON.stringify([{ filename: 'src/large.ts', additions: 120 }]);
-        }
-        if (joined.includes('/pulls/10') && joined.includes('application/vnd.github.v3.diff')) {
-          return [
-            'diff --git a/src/large.ts b/src/large.ts',
-            'index 1111111..2222222 100644',
-            '--- a/src/large.ts',
-            '+++ b/src/large.ts',
-            '@@ -1 +1 @@',
-            '+const value = 1;',
-          ].join('\n');
-        }
-        if (args[0] === 'graphql') {
-          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
-        }
-        return JSON.stringify([]);
-      },
-    });
-
-    const context = await adapter.getReviewContext({
-      id: 'PR_10',
-      marker: '2026-07-16T13:00:00Z',
-      number: 10,
-      title: 'Missing patch PR',
-      url: 'https://github.com/acme/a/pull/10',
-      baseRefName: 'main',
-      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
-    });
-
-    expect(context.changedFiles[0]?.patch).toContain('+const value = 1;');
-    expect(context.changedFiles[0]?.additions.has(1)).toBe(true);
-    expect(calls.some((args) => args.includes('Accept: application/vnd.github.v3.diff'))).toBe(true);
-  });
-
-  test('continues without missing patches when the pull diff is too large', async () => {
-    const calls: string[][] = [];
-    const adapter = new GitHubAdapter({
-      execGh: async (args) => {
-        calls.push(args);
-        const joined = args.join(' ');
-        if (joined.includes('/pulls/13/files')) {
-          return JSON.stringify([{ filename: 'src/huge.ts', additions: 25_000 }]);
-        }
-        if (joined.includes('/pulls/13') && joined.includes('application/vnd.github.v3.diff')) {
-          throw new Error('gh exited with 1: gh: Sorry, the diff exceeded the maximum number of lines (20000) (HTTP 406)');
-        }
-        if (args[0] === 'graphql') {
-          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
-        }
-        return JSON.stringify([]);
-      },
-    });
-
-    const context = await adapter.getReviewContext({
-      id: 'PR_13',
-      marker: '2026-07-16T14:00:00Z',
-      number: 13,
-      title: 'Huge diff PR',
-      url: 'https://github.com/acme/a/pull/13',
-      baseRefName: 'main',
-      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
-    });
-
-    expect(context.changedFiles[0]?.path).toBe('src/huge.ts');
-    expect(context.changedFiles[0]?.patch).toBeUndefined();
-    expect(context.changedFiles[0]?.additions.size).toBe(0);
-    expect(calls.some((args) => args.includes('Accept: application/vnd.github.v3.diff'))).toBe(true);
-  });
-
-  test('still fails when the fallback pull diff fails for another reason', async () => {
-    const adapter = new GitHubAdapter({
-      execGh: async (args) => {
-        const joined = args.join(' ');
-        if (joined.includes('/pulls/14/files')) {
-          return JSON.stringify([{ filename: 'src/missing.ts', additions: 1 }]);
-        }
-        if (joined.includes('/pulls/14') && joined.includes('application/vnd.github.v3.diff')) {
-          throw new Error('gh exited with 1: auth failed');
-        }
-        if (args[0] === 'graphql') {
-          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
-        }
-        return JSON.stringify([]);
-      },
-    });
-
-    await expect(adapter.getReviewContext({
-      id: 'PR_14',
-      marker: '2026-07-16T14:00:00Z',
-      number: 14,
-      title: 'Broken diff PR',
-      url: 'https://github.com/acme/a/pull/14',
-      baseRefName: 'main',
-      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
-    })).rejects.toThrow('auth failed');
-  });
 });

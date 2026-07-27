@@ -1,7 +1,6 @@
 import { DEFAULT_COMMAND_TIMEOUT_MS, runProcess } from './process-runner.js';
 
 const REVIEW_MARKER_PREFIX = '<!-- pr-review-agent:';
-const PULL_DIFF_TOO_LARGE = /diff exceeded the maximum number of lines|HTTP 406/;
 
 export class GitHubAdapter {
   constructor({ execGh, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
@@ -80,20 +79,16 @@ query {
 
   async getReviewContext(request) {
     const { owner, repo } = request.repository;
-    const [files, issueComments, reviews, reviewComments, reviewThreads] = await Promise.all([
-      this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/files`),
+    const [issueComments, reviews, reviewComments, reviewThreads] = await Promise.all([
       this.#getPaginatedJson(`repos/${owner}/${repo}/issues/${request.number}/comments`),
       this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`),
       this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/comments`),
       this.#getReviewThreads(owner, repo, request.number),
     ]);
-    const fallbackPatches = files.some((file) => typeof file.patch !== 'string')
-      ? await this.#getPullDiffPatches(owner, repo, request.number)
-      : new Map();
 
     return {
       pullRequest: request,
-      changedFiles: files.map((file) => buildChangedFile(file, fallbackPatches)),
+      changedFiles: [],
       issueComments: issueComments.map((comment) => ({ author: loginOrUnknown(comment.user), body: comment.body ?? '' })),
       reviews: reviews.map((review) => ({ author: loginOrUnknown(review.user), state: review.state ?? 'UNKNOWN', body: review.body ?? '' })),
       reviewComments: reviewComments.map((comment) => ({ author: loginOrUnknown(comment.user), path: comment.path, line: comment.line ?? comment.original_line, body: comment.body ?? '' })),
@@ -154,18 +149,6 @@ ${fileSections}
     const reviews = await this.#getPaginatedJson(`repos/${owner}/${repo}/pulls/${request.number}/reviews`);
     const marker = reviewMarker(request);
     return reviews.some((review) => review.body?.includes(marker));
-  }
-
-  async #getPullDiffPatches(owner, repo, number) {
-    try {
-      const diff = await this.execGh([`repos/${owner}/${repo}/pulls/${number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
-      return parseDiffPatches(diff);
-    } catch (error) {
-      if (isPullDiffTooLargeError(error)) {
-        return null;
-      }
-      throw error;
-    }
   }
 
   async #getPaginatedJson(path) {
@@ -301,50 +284,6 @@ export function parseAddedLines(patch) {
   return additions;
 }
 
-function parseDiffPatches(diff) {
-  const patches = new Map();
-  let currentPath;
-  let currentLines = [];
-
-  const flush = () => {
-    if (currentPath && currentLines.length > 0) {
-      patches.set(currentPath, currentLines.join('\n'));
-    }
-  };
-
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      flush();
-      currentPath = undefined;
-      currentLines = [line];
-      continue;
-    }
-
-    if (currentLines.length === 0) {
-      continue;
-    }
-
-    currentLines.push(line);
-    if (line.startsWith('+++ b/')) {
-      currentPath = line.slice('+++ b/'.length);
-    }
-  }
-
-  flush();
-  return patches;
-}
-
-function buildChangedFile(file, fallbackPatches) {
-  const patch = typeof file.patch === 'string' ? file.patch : fallbackPatches?.get(file.filename);
-  if (typeof patch !== 'string') {
-    if (fallbackPatches === null) {
-      return { path: file.filename, patch: undefined, additions: new Set() };
-    }
-    throw new Error(`GitHub did not include a patch for ${file.filename}; fallback pull diff did not include it`);
-  }
-  return { path: file.filename, patch, additions: parseAddedLines(patch) };
-}
-
 function bodyWithReviewMarker(body, request) {
   return `${body}\n\n${reviewMarker(request)}`;
 }
@@ -365,10 +304,6 @@ function isViewerUser(requestedReviewer, viewer) {
 
 function loginOrUnknown(user) {
   return user?.login ?? 'unknown';
-}
-
-function isPullDiffTooLargeError(error) {
-  return error instanceof Error && PULL_DIFF_TOO_LARGE.test(error.message);
 }
 
 function formatEntries(entries, formatter) {
