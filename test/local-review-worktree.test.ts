@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { LocalReviewWorktree, parseLocalDiff } from '../src/local-review-worktree.js';
 
-type RunCall = { command: string; args: string[]; input: string | undefined; cwd: string | undefined };
+type RunCall = { command: string; args: string[]; input: string | undefined; cwd: string | undefined; env?: Record<string, string | undefined> };
 
 const roots: string[] = [];
 const request = {
@@ -66,7 +66,10 @@ describe('LocalReviewWorktree', () => {
       rootDir,
       id: () => 'abc123',
       run: async (command, args, input, options) => {
-        calls.push({ command, args, input, cwd: options?.cwd });
+        calls.push({ command, args, input, cwd: options?.cwd, ...(options?.env ? { env: options.env } : {}) });
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
         if (args[0] === 'diff') {
           return [
             'diff --git a/src/a.ts b/src/a.ts',
@@ -93,11 +96,76 @@ describe('LocalReviewWorktree', () => {
     expect(calls).toEqual([
       { command: 'git', args: ['init', repoDir], input: undefined, cwd: undefined },
       { command: 'git', args: ['remote', 'add', 'origin', 'https://github.com/acme/app.git'], input: undefined, cwd: repoDir },
-      { command: 'git', args: ['fetch', 'origin', '+refs/heads/develop:refs/remotes/origin/develop', '+refs/pull/7/head:refs/heads/pr-7'], input: undefined, cwd: repoDir },
+      { command: 'gh', args: ['auth', 'token'], input: undefined, cwd: undefined },
+      {
+        command: 'git',
+        args: ['fetch', 'origin', '+refs/heads/develop:refs/remotes/origin/develop', '+refs/pull/7/head:refs/heads/pr-7'],
+        input: undefined,
+        cwd: repoDir,
+        env: expect.objectContaining({ GIT_ASKPASS: expect.any(String), GIT_TERMINAL_PROMPT: '0' }),
+      },
       { command: 'git', args: ['worktree', 'add', '--detach', worktreeDir, 'refs/heads/pr-7'], input: undefined, cwd: repoDir },
       { command: 'git', args: ['diff', '--unified=0', 'refs/remotes/origin/develop...refs/heads/pr-7'], input: undefined, cwd: repoDir },
       { command: 'git', args: ['worktree', 'remove', '--force', worktreeDir], input: undefined, cwd: repoDir },
     ]);
+  });
+
+  test('authenticates local fetches with gh token through non-interactive askpass env', async () => {
+    const rootDir = await tempRoot();
+    const calls: RunCall[] = [];
+    let fetchEnv: Record<string, string | undefined> | undefined;
+    const local = new LocalReviewWorktree({
+      rootDir,
+      id: () => 'abc123',
+      run: async (command, args, input, options) => {
+        calls.push({ command, args, input, cwd: options?.cwd, ...(options?.env ? { env: options.env } : {}) });
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
+        if (args[0] === 'fetch') {
+          fetchEnv = options?.env;
+        }
+        return '';
+      },
+    });
+
+    await local.withCheckout(request, async () => undefined);
+
+    const ghIndex = calls.findIndex((call) => call.command === 'gh' && call.args.join(' ') === 'auth token');
+    const fetchIndex = calls.findIndex((call) => call.command === 'git' && call.args[0] === 'fetch');
+    expect(ghIndex).toBeGreaterThanOrEqual(0);
+    expect(fetchIndex).toBeGreaterThan(ghIndex);
+    expect(fetchEnv).toEqual(expect.objectContaining({ GIT_ASKPASS: expect.any(String), GIT_TERMINAL_PROMPT: '0' }));
+    expect(fetchEnv?.GIT_ASKPASS).toContain(join(rootDir, 'acme-app-7-abc123'));
+    expect(calls.flatMap((call) => call.args)).not.toContain('fake-token');
+  });
+
+  test.each([
+    ['missing', async () => ''],
+    ['failed', async () => {
+      throw new Error('not logged in');
+    }],
+  ])('throws a clear error before git fetch when gh auth token is %s', async (_case, ghToken) => {
+    const rootDir = await tempRoot();
+    const calls: RunCall[] = [];
+    const local = new LocalReviewWorktree({
+      rootDir,
+      id: () => 'abc123',
+      run: async (command, args, input, options) => {
+        calls.push({ command, args, input, cwd: options?.cwd, ...(options?.env ? { env: options.env } : {}) });
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return ghToken();
+        }
+        if (args[0] === 'fetch') {
+          throw new Error('git fetch should not run');
+        }
+        return '';
+      },
+    });
+
+    await expect(local.withCheckout(request, async () => undefined)).rejects.toThrow(/gh auth token/i);
+
+    expect(calls.some((call) => call.command === 'git' && call.args[0] === 'fetch')).toBe(false);
   });
 
   test('rejects requests without a base ref name before running git', async () => {
@@ -121,11 +189,16 @@ describe('LocalReviewWorktree', () => {
     const rootDir = await tempRoot();
     const calls: RunCall[] = [];
     const callbackError = new Error('review failed');
+    const warnings: unknown[][] = [];
     const local = new LocalReviewWorktree({
       rootDir,
       id: () => 'abc123',
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
       run: async (command, args, input, options) => {
-        calls.push({ command, args, input, cwd: options?.cwd });
+        calls.push({ command, args, input, cwd: options?.cwd, ...(options?.env ? { env: options.env } : {}) });
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
         if (args[0] === 'worktree' && args[1] === 'remove') {
           throw new Error('cleanup failed');
         }
@@ -145,5 +218,8 @@ describe('LocalReviewWorktree', () => {
     const worktreeDir = join(rootDir, 'acme-app-7-abc123', 'worktree');
     expect(thrown).toBe(callbackError);
     expect(calls.at(-1)).toMatchObject({ command: 'git', args: ['worktree', 'remove', '--force', worktreeDir] });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.[0]).toMatch(/cleanup failed/i);
+    expect(warnings[0]?.[1]).toBeInstanceOf(Error);
   });
 });

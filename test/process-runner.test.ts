@@ -12,6 +12,15 @@ describe('runProcess', () => {
     expect(stdout.trim()).toBe(cwd);
   });
 
+  test('merges supplied environment variables into the spawn environment', async () => {
+    const envName = `PR_REVIEW_AGENT_ENV_${Date.now()}`;
+    const script = `console.log([process.env[${JSON.stringify(envName)}], Boolean(process.env.PATH)].join(':'))`;
+
+    const stdout = await runProcess(process.execPath, ['-e', script], undefined, { env: { [envName]: 'merged' } });
+
+    expect(stdout.trim()).toBe('merged:true');
+  });
+
   test('terminates a command that exceeds its timeout', async () => {
     // Integration check: a spawned OS process needs the platform clock to verify cancellation.
     const startedAt = Date.now();

@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
 
-export function runProcess(command, args, input, { timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS, cwd } = {}) {
+export function runProcess(command, args, input, { timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS, cwd, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd });
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd, env: env ? { ...process.env, ...env } : process.env });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

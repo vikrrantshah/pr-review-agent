@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAddedLines } from './github-adapter.js';
 import { runProcess } from './process-runner.js';
 
 export class LocalReviewWorktree {
-  constructor({ run = runProcess, rootDir = join(tmpdir(), 'pr-review-agent-worktrees'), id = randomUUID } = {}) {
+  constructor({ run = runProcess, rootDir = join(tmpdir(), 'pr-review-agent-worktrees'), id = randomUUID, logger = console } = {}) {
     this.run = run;
     this.rootDir = rootDir;
     this.id = id;
+    this.logger = logger;
   }
 
   async withCheckout(request, callback) {
@@ -29,7 +30,8 @@ export class LocalReviewWorktree {
       await mkdir(dir, { recursive: true, mode: 0o700 });
       await this.run('git', ['init', repoDir], undefined);
       await this.run('git', ['remote', 'add', 'origin', remote], undefined, { cwd: repoDir });
-      await this.run('git', ['fetch', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`, `+refs/pull/${request.number}/head:refs/heads/${branch}`], undefined, { cwd: repoDir });
+      const authEnv = await gitAuthEnv(this.run, dir);
+      await this.run('git', ['fetch', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`, `+refs/pull/${request.number}/head:refs/heads/${branch}`], undefined, { cwd: repoDir, env: authEnv });
       await this.run('git', ['worktree', 'add', '--detach', worktreeDir, `refs/heads/${branch}`], undefined, { cwd: repoDir });
       const diff = await this.run('git', ['diff', '--unified=0', `refs/remotes/origin/${base}...refs/heads/${branch}`], undefined, { cwd: repoDir });
 
@@ -38,9 +40,37 @@ export class LocalReviewWorktree {
       failed = true;
       throw error;
     } finally {
-      await cleanup(this.run, repoDir, worktreeDir, dir, failed);
+      await cleanup(this.run, repoDir, worktreeDir, dir, failed, this.logger);
     }
   }
+}
+
+async function gitAuthEnv(run, dir) {
+  let token;
+  try {
+    token = (await run('gh', ['auth', 'token'], undefined)).trim();
+  } catch (error) {
+    throw new Error(`gh auth token is required for local checkout: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!token) {
+    throw new Error('gh auth token is required for local checkout: gh auth token returned no token');
+  }
+
+  const tokenPath = join(dir, 'git-token');
+  const askpassPath = join(dir, 'git-askpass.sh');
+  await writeFile(tokenPath, `${token}\n`, { mode: 0o600 });
+  await chmod(tokenPath, 0o600);
+  await writeFile(askpassPath, [
+    '#!/bin/sh',
+    'case "$1" in',
+    "*Username*) printf '%s\\n' x-access-token ;;",
+    '*) cat "$PR_REVIEW_AGENT_GIT_TOKEN_FILE" ;;',
+    'esac',
+    '',
+  ].join('\n'), { mode: 0o700 });
+  await chmod(askpassPath, 0o700);
+
+  return { GIT_ASKPASS: askpassPath, GIT_TERMINAL_PROMPT: '0', PR_REVIEW_AGENT_GIT_TOKEN_FILE: tokenPath };
 }
 
 export function parseLocalDiff(diff) {
@@ -150,7 +180,7 @@ function decodeGitQuotedPath(path) {
   return result;
 }
 
-async function cleanup(run, repoDir, worktreeDir, dir, failed) {
+async function cleanup(run, repoDir, worktreeDir, dir, failed, logger) {
   let cleanupError;
   try {
     await run('git', ['worktree', 'remove', '--force', worktreeDir], undefined, { cwd: repoDir });
@@ -169,5 +199,5 @@ async function cleanup(run, repoDir, worktreeDir, dir, failed) {
   if (!failed) {
     throw cleanupError;
   }
-  // ponytail: cleanup errors are secondary; preserve the checkout/callback failure.
+  logger.warn('cleanup failed after original error', cleanupError);
 }
