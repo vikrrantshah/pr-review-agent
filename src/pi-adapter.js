@@ -19,8 +19,8 @@ export class PiAdapter {
     this.thinking = thinking;
   }
 
-  async review(prompt) {
-    return this.run('pi', this.#args(), prompt, { timeoutMs: this.timeoutMs });
+  async review(prompt, { cwd } = {}) {
+    return this.run('pi', this.#args(), prompt, { timeoutMs: this.timeoutMs, cwd });
   }
 
   #args() {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { PiAdapter } from '../src/pi-adapter.js';
 
-type RunOptions = { timeoutMs?: number };
+type RunOptions = { timeoutMs?: number; cwd?: string };
 
 describe('PiAdapter', () => {
   test('invokes Pi with the required model and print flags', async () => {
@@ -24,6 +24,20 @@ describe('PiAdapter', () => {
         timeoutMs: 60 * 60 * 1000,
       },
     ]);
+  });
+
+  test('passes cwd to Pi run options', async () => {
+    const calls: { cwd: string | undefined }[] = [];
+    const adapter = new PiAdapter({
+      run: async (_command: string, _args: string[], _input: string, options?: RunOptions) => {
+        calls.push({ cwd: options?.cwd });
+        return '{"findings":[]}';
+      },
+    });
+
+    await adapter.review('prompt', { cwd: '/tmp/pr-worktree' });
+
+    expect(calls).toEqual([{ cwd: '/tmp/pr-worktree' }]);
   });
   test('uses Pi model and thinking from environment', async () => {
     const originalModel = process.env.PR_REVIEW_AGENT_PI_MODEL;
