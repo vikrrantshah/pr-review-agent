@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Orchestrator } from '../src/orchestrator.js';
-import type { GitHubPort, PiPort, ReviewRequest, StatePort } from '../src/types.js';
+import type { ChangedFile, GitHubPort, PiPort, ReviewRequest, StatePort } from '../src/types.js';
 
 function reviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewRequest {
   return {
@@ -9,6 +9,7 @@ function reviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewRequest {
     number: 1,
     title: 'Test PR',
     url: 'https://github.com/acme/a/pull/1',
+    baseRefName: 'main',
     repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     ...overrides,
   };
@@ -49,6 +50,14 @@ function makeGithub(requests: ReviewRequest[]): GitHubPort & { submitted: unknow
   };
 }
 
+function makeLocalReview(changedFiles: ChangedFile[] = [{ path: 'src/app.ts', additions: new Set([10]) }]) {
+  return {
+    async withCheckout(_request: ReviewRequest, callback: (checkout: { cwd: string; changedFiles: ChangedFile[] }) => unknown) {
+      return callback({ cwd: '/tmp/pr-worktree', changedFiles });
+    },
+  };
+}
+
 describe('Orchestrator', () => {
   test('skips an already handled marker and reviews a new marker', async () => {
     const state = new MemoryState();
@@ -56,7 +65,7 @@ describe('Orchestrator', () => {
     const github = makeGithub([reviewRequest({ marker: 'old-marker' }), reviewRequest({ marker: 'new-marker' })]);
     const pi: PiPort = { async review() { return '{"findings":[]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.reviewed).toBe(1);
     expect(result.skipped).toBe(1);
@@ -64,12 +73,43 @@ describe('Orchestrator', () => {
     expect(await state.isHandled('PR_1', 'new-marker')).toBe(true);
   });
 
+  test('runs Pi from the local PR worktree with checkout files', async () => {
+    const github = makeGithub([reviewRequest()]);
+    const state = new MemoryState();
+    const checkoutChangedFiles: ChangedFile[] = [{ path: 'src/app.ts', patch: '@@ -0,0 +1 @@\n+ok();', additions: new Set([1]) }];
+    let promptChangedFiles: ChangedFile[] | undefined;
+    const localReview = {
+      async withCheckout(_request: ReviewRequest, callback: (checkout: { cwd: string; changedFiles: ChangedFile[] }) => Promise<unknown>) {
+        return callback({ cwd: '/tmp/pr-worktree', changedFiles: checkoutChangedFiles });
+      },
+    };
+    github.buildPrompt = (context) => {
+      promptChangedFiles = context.changedFiles;
+      return 'prompt';
+    };
+    const piCalls: Array<{ cwd: string | undefined }> = [];
+    const pi: PiPort = {
+      async review(_prompt, options) {
+        piCalls.push({ cwd: options?.cwd });
+        return '{"findings":[]}';
+      },
+    };
+
+    const result = await new Orchestrator({ github, pi, state, localReview, dryRun: false }).runTick();
+
+    expect({ reviewed: result.reviewed, promptChangedFiles, piCalls }).toEqual({
+      reviewed: 1,
+      promptChangedFiles: checkoutChangedFiles,
+      piCalls: [{ cwd: '/tmp/pr-worktree' }],
+    });
+  });
+
   test('toolkit failures do not mark the marker handled', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);
     const pi: PiPort = { async review() { throw new Error('pi failed'); } };
 
-    const result = await new Orchestrator({ github, pi, state, dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.failed).toBe(1);
     expect(github.submitted).toHaveLength(0);
@@ -82,10 +122,37 @@ describe('Orchestrator', () => {
     github.submitReview = async () => { throw new Error('gh failed'); };
     const pi: PiPort = { async review() { return '{"findings":[]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.failed).toBe(1);
     expect(await state.isHandled('PR_1', '2026-07-15T10:00:00Z')).toBe(false);
+  });
+
+  test('does not submit or mark handled when local checkout cleanup fails', async () => {
+    const logs: Array<{ event: string }> = [];
+    const state = new MemoryState();
+    const github = makeGithub([reviewRequest()]);
+    const localReview = {
+      async withCheckout(_request: ReviewRequest, callback: (checkout: { cwd: string; changedFiles: ChangedFile[] }) => Promise<unknown>) {
+        await callback({ cwd: '/tmp/pr-worktree', changedFiles: [{ path: 'src/app.ts', additions: new Set([10]) }] });
+        throw new Error('cleanup failed');
+      },
+    };
+    const pi: PiPort = { async review() { return '{"findings":[]}'; } };
+
+    const result = await new Orchestrator({
+      github,
+      pi,
+      state,
+      localReview,
+      dryRun: false,
+      logger: { log: (line: string) => logs.push(JSON.parse(line)) },
+    }).runTick();
+
+    expect(result).toMatchObject({ reviewed: 0, failed: 1 });
+    expect(github.submitted).toHaveLength(0);
+    expect(await state.isHandled('PR_1', '2026-07-15T10:00:00Z')).toBe(false);
+    expect(logs.map((log) => log.event)).toEqual(['review_started', 'review_failed']);
   });
 
   test('dry-run submits nothing and leaves state unhandled', async () => {
@@ -93,7 +160,7 @@ describe('Orchestrator', () => {
     const github = makeGithub([reviewRequest()]);
     const pi: PiPort = { async review() { return '{"findings":[{"severity":"Important","path":"src/app.ts","line":10,"body":"Fix it."}]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, dryRun: true }).runTick();
+    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: true }).runTick();
 
     expect(result.reviewed).toBe(1);
     expect(github.submitted).toHaveLength(0);
@@ -109,7 +176,7 @@ describe('Orchestrator', () => {
       await releaseGate.promise;
       return [];
     };
-    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state: new MemoryState(), dryRun: false });
+    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false });
     const first = orchestrator.runTick();
     await started.promise;
     const second = await orchestrator.runTick();
@@ -145,7 +212,7 @@ describe('Orchestrator', () => {
       github.submitted.push(decision);
       submittedReviewExists = true;
     };
-    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state, dryRun: false });
+    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state, localReview: makeLocalReview(), dryRun: false });
 
     const first = await orchestrator.runTick();
     const second = await orchestrator.runTick();
@@ -176,6 +243,7 @@ describe('Orchestrator', () => {
       github,
       pi,
       state: new MemoryState(),
+      localReview: makeLocalReview(),
       dryRun: false,
       logger: { log: (line: string) => logs.push(JSON.parse(line)) },
     }).runTick();
@@ -227,7 +295,7 @@ describe('Orchestrator', () => {
       },
     };
 
-    const result = await new Orchestrator({ github, pi, state: new MemoryState(), dryRun: false, concurrency: 2 }).runTick();
+    const result = await new Orchestrator({ github, pi, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false, concurrency: 2 }).runTick();
 
     expect(result.reviewed).toBe(3);
     expect(maxInFlight).toBe(2);

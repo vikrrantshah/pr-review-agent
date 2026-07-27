@@ -1,10 +1,11 @@
 import { formatReviewDecision, parseReviewResult } from './review-result.js';
 
 export class Orchestrator {
-  constructor({ github, pi, state, dryRun = false, concurrency = 3, logger = console }) {
+  constructor({ github, pi, state, localReview, dryRun = false, concurrency = 3, logger = console }) {
     this.github = github;
     this.pi = pi;
     this.state = state;
+    this.localReview = localReview;
     this.dryRun = dryRun;
     this.concurrency = Math.max(1, Math.floor(concurrency));
     this.logger = logger;
@@ -64,11 +65,16 @@ export class Orchestrator {
         return;
       }
       this.#log(reviewLogEvent('review_started', request));
-      const context = await this.github.getReviewContext(request);
-      const prompt = this.github.buildPrompt(context);
-      const result = parseReviewResult(await this.pi.review(prompt));
-      const decision = formatReviewDecision({ findings: result.findings, changedFiles: context.changedFiles });
-      const counts = countFindings(result.findings);
+      const metadata = await this.github.getReviewContext(request);
+      const { decision, counts } = await this.localReview.withCheckout(request, async (checkout) => {
+        const context = { ...metadata, changedFiles: checkout.changedFiles };
+        const prompt = this.github.buildPrompt(context);
+        const result = parseReviewResult(await this.pi.review(prompt, { cwd: checkout.cwd }));
+        return {
+          decision: formatReviewDecision({ findings: result.findings, changedFiles: context.changedFiles }),
+          counts: countFindings(result.findings),
+        };
+      });
 
       if (!this.dryRun) {
         await this.github.submitReview(request, decision);

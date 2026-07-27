@@ -31,6 +31,7 @@ export interface ReviewRequest {
   number: number;
   title: string;
   url: string;
+  baseRefName: string;
   repository: RepositoryRef;
 }
 
@@ -57,7 +58,7 @@ export interface GitHubPort {
 }
 
 export interface PiPort {
-  review(prompt: string): Promise<string>;
+  review(prompt: string, options?: { cwd?: string }): Promise<string>;
 }
 
 export interface StatePort {

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { createLogger, formatStartup, formatSummary } from './loggers.js';
 import { GitHubAdapter } from './github-adapter.js';
 import { Orchestrator } from './orchestrator.js';
+import { LocalReviewWorktree } from './local-review-worktree.js';
 import { PiAdapter } from './pi-adapter.js';
 import { StateStore } from './state-store.js';
 
@@ -13,6 +14,7 @@ async function main() {
     github: new GitHubAdapter(),
     pi: new PiAdapter({ model: options.piModel, thinking: options.piThinking }),
     state: new StateStore(),
+    localReview: new LocalReviewWorktree(),
     dryRun: options.dryRun,
     concurrency: options.concurrency,
     logger,

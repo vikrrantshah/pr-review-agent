@@ -18,6 +18,7 @@ describe('GitHubAdapter', () => {
                   title: 'Personal A',
                   url: 'https://github.com/acme/a/pull/1',
                   headRefOid: 'head-a',
+                  baseRefName: 'main-a',
                   repository: { owner: { login: 'acme' }, name: 'a', nameWithOwner: 'acme/a' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: { nodes: [
@@ -30,6 +31,7 @@ describe('GitHubAdapter', () => {
                   number: 2,
                   title: 'Team only',
                   url: 'https://github.com/acme/b/pull/2',
+                  baseRefName: 'main-b',
                   repository: { owner: { login: 'acme' }, name: 'b', nameWithOwner: 'acme/b' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'Team', slug: 'platform' } }] },
                   timelineItems: { nodes: [
@@ -43,6 +45,7 @@ describe('GitHubAdapter', () => {
                   title: 'Personal B',
                   url: 'https://github.com/other/c/pull/3',
                   headRefOid: 'head-b',
+                  baseRefName: 'main-c',
                   repository: { owner: { login: 'other' }, name: 'c', nameWithOwner: 'other/c' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: { nodes: [
@@ -60,6 +63,44 @@ describe('GitHubAdapter', () => {
 
     expect(requests.map((request) => request.repository.nameWithOwner)).toEqual(['acme/a', 'other/c']);
     expect(requests.map((request) => request.marker)).toEqual(['2026-07-15T10:00:00Z:head-a', '2026-07-16T09:00:00Z:head-b']);
+  });
+
+  test('includes the PR base ref in review requests', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (_args, input) => {
+        graphqlInputs.push(input ?? '');
+        return JSON.stringify({
+          data: {
+            viewer: { login: 'vikrant' },
+            search: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                {
+                  __typename: 'PullRequest',
+                  id: 'PR_base',
+                  number: 4,
+                  title: 'Base ref PR',
+                  url: 'https://github.com/acme/base/pull/4',
+                  headRefOid: 'head-base',
+                  baseRefName: 'develop',
+                  repository: { owner: { login: 'acme' }, name: 'base', nameWithOwner: 'acme/base' },
+                  reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                  timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+                    { __typename: 'ReviewRequestedEvent', id: 'request-base', createdAt: '2026-07-15T12:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                  ] },
+                },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(graphqlInputs[0]).toContain('baseRefName');
+    expect(requests[0]?.baseRefName).toBe('develop');
   });
 
   test('fetches every GraphQL search page for personal review requests', async () => {
@@ -80,6 +121,7 @@ describe('GitHubAdapter', () => {
                   number: secondPage ? 2 : 1,
                   title: secondPage ? 'Second page' : 'First page',
                   url: `https://github.com/acme/repo/pull/${secondPage ? 2 : 1}`,
+                  baseRefName: secondPage ? 'release' : 'main',
                   repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
@@ -126,6 +168,7 @@ describe('GitHubAdapter', () => {
                   title: 'Marker PR',
                   url: 'https://github.com/acme/repo/pull/11',
                   headRefOid: 'head-marker',
+                  baseRefName: 'main',
                   repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
                   reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                   timelineItems: {
@@ -165,6 +208,7 @@ describe('GitHubAdapter', () => {
                 title: 'Re-review PR',
                 url: 'https://github.com/acme/repo/pull/12',
                 headRefOid: 'head-after-fix',
+                baseRefName: 'main',
                 repository: { owner: { login: 'acme' }, name: 'repo', nameWithOwner: 'acme/repo' },
                 reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
                 timelineItems: {
@@ -222,6 +266,7 @@ describe('GitHubAdapter', () => {
       number: 7,
       title: 'Context PR',
       url: 'https://github.com/acme/a/pull/7',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
     const prompt = adapter.buildPrompt(context);
@@ -278,6 +323,7 @@ describe('GitHubAdapter', () => {
       number: 8,
       title: 'Paginated context PR',
       url: 'https://github.com/acme/a/pull/8',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
@@ -317,6 +363,7 @@ describe('GitHubAdapter', () => {
       number: 9,
       title: 'Thread pagination PR',
       url: 'https://github.com/acme/a/pull/9',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
@@ -360,6 +407,7 @@ describe('GitHubAdapter', () => {
       number: 12,
       title: 'Thread comment pagination PR',
       url: 'https://github.com/acme/a/pull/12',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
@@ -404,6 +452,7 @@ describe('GitHubAdapter', () => {
       number: 10,
       title: 'Missing patch PR',
       url: 'https://github.com/acme/a/pull/10',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
@@ -437,6 +486,7 @@ describe('GitHubAdapter', () => {
       number: 13,
       title: 'Huge diff PR',
       url: 'https://github.com/acme/a/pull/13',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     });
 
@@ -469,6 +519,7 @@ describe('GitHubAdapter', () => {
       number: 14,
       title: 'Broken diff PR',
       url: 'https://github.com/acme/a/pull/14',
+      baseRefName: 'main',
       repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
     })).rejects.toThrow('auth failed');
   });

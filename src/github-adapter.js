@@ -28,6 +28,7 @@ query {
         title
         url
         headRefOid
+        baseRefName
         repository { name nameWithOwner owner { login } }
         reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
         timelineItems(first: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) {
@@ -69,6 +70,7 @@ query {
         number: node.number,
         title: node.title,
         url: node.url,
+        baseRefName: node.baseRefName,
         repository: { owner: repo.owner.login, repo: repo.name, nameWithOwner: repo.nameWithOwner },
       });
     }
