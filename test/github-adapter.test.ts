@@ -411,4 +411,65 @@ describe('GitHubAdapter', () => {
     expect(context.changedFiles[0]?.additions.has(1)).toBe(true);
     expect(calls.some((args) => args.includes('Accept: application/vnd.github.v3.diff'))).toBe(true);
   });
+
+  test('continues without missing patches when the pull diff is too large', async () => {
+    const calls: string[][] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (args) => {
+        calls.push(args);
+        const joined = args.join(' ');
+        if (joined.includes('/pulls/13/files')) {
+          return JSON.stringify([{ filename: 'src/huge.ts', additions: 25_000 }]);
+        }
+        if (joined.includes('/pulls/13') && joined.includes('application/vnd.github.v3.diff')) {
+          throw new Error('gh exited with 1: gh: Sorry, the diff exceeded the maximum number of lines (20000) (HTTP 406)');
+        }
+        if (args[0] === 'graphql') {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
+        }
+        return JSON.stringify([]);
+      },
+    });
+
+    const context = await adapter.getReviewContext({
+      id: 'PR_13',
+      marker: '2026-07-16T14:00:00Z',
+      number: 13,
+      title: 'Huge diff PR',
+      url: 'https://github.com/acme/a/pull/13',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    });
+
+    expect(context.changedFiles[0]?.path).toBe('src/huge.ts');
+    expect(context.changedFiles[0]?.patch).toBeUndefined();
+    expect(context.changedFiles[0]?.additions.size).toBe(0);
+    expect(calls.some((args) => args.includes('Accept: application/vnd.github.v3.diff'))).toBe(true);
+  });
+
+  test('still fails when the fallback pull diff fails for another reason', async () => {
+    const adapter = new GitHubAdapter({
+      execGh: async (args) => {
+        const joined = args.join(' ');
+        if (joined.includes('/pulls/14/files')) {
+          return JSON.stringify([{ filename: 'src/missing.ts', additions: 1 }]);
+        }
+        if (joined.includes('/pulls/14') && joined.includes('application/vnd.github.v3.diff')) {
+          throw new Error('gh exited with 1: auth failed');
+        }
+        if (args[0] === 'graphql') {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
+        }
+        return JSON.stringify([]);
+      },
+    });
+
+    await expect(adapter.getReviewContext({
+      id: 'PR_14',
+      marker: '2026-07-16T14:00:00Z',
+      number: 14,
+      title: 'Broken diff PR',
+      url: 'https://github.com/acme/a/pull/14',
+      repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    })).rejects.toThrow('auth failed');
+  });
 });

@@ -1,6 +1,7 @@
 import { DEFAULT_COMMAND_TIMEOUT_MS, runProcess } from './process-runner.js';
 
 const REVIEW_MARKER_PREFIX = '<!-- pr-review-agent:';
+const PULL_DIFF_TOO_LARGE = /diff exceeded the maximum number of lines|HTTP 406/;
 
 export class GitHubAdapter {
   constructor({ execGh, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = {}) {
@@ -154,8 +155,15 @@ ${fileSections}
   }
 
   async #getPullDiffPatches(owner, repo, number) {
-    const diff = await this.execGh([`repos/${owner}/${repo}/pulls/${number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
-    return parseDiffPatches(diff);
+    try {
+      const diff = await this.execGh([`repos/${owner}/${repo}/pulls/${number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
+      return parseDiffPatches(diff);
+    } catch (error) {
+      if (isPullDiffTooLargeError(error)) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async #getPaginatedJson(path) {
@@ -324,9 +332,12 @@ function parseDiffPatches(diff) {
   return patches;
 }
 
-function buildChangedFile(file, fallbackPatches = new Map()) {
-  const patch = typeof file.patch === 'string' ? file.patch : fallbackPatches.get(file.filename);
+function buildChangedFile(file, fallbackPatches) {
+  const patch = typeof file.patch === 'string' ? file.patch : fallbackPatches?.get(file.filename);
   if (typeof patch !== 'string') {
+    if (fallbackPatches === null) {
+      return { path: file.filename, patch: undefined, additions: new Set() };
+    }
     throw new Error(`GitHub did not include a patch for ${file.filename}; fallback pull diff did not include it`);
   }
   return { path: file.filename, patch, additions: parseAddedLines(patch) };
@@ -352,6 +363,10 @@ function isViewerUser(requestedReviewer, viewer) {
 
 function loginOrUnknown(user) {
   return user?.login ?? 'unknown';
+}
+
+function isPullDiffTooLargeError(error) {
+  return error instanceof Error && PULL_DIFF_TOO_LARGE.test(error.message);
 }
 
 function formatEntries(entries, formatter) {
