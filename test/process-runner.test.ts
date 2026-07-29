@@ -21,6 +21,12 @@ describe('runProcess', () => {
     expect(stdout.trim()).toBe('merged:true');
   });
 
+  test('surfaces stderr when stdout is required but empty', async () => {
+    const script = "console.error('provider auth missing')";
+
+    await expect(runProcess(process.execPath, ['-e', script], undefined, { requireStdout: true })).rejects.toThrow('provider auth missing');
+  });
+
   test('terminates a command that exceeds its timeout', async () => {
     // Integration check: a spawned OS process needs the platform clock to verify cancellation.
     const startedAt = Date.now();
