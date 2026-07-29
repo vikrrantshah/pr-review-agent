@@ -64,4 +64,8 @@ describe('review result parsing and decision formatting', () => {
       { severity: 'Important', path: 'src/app.ts', line: 10, body: 'Fix this.' },
     ]);
   });
+
+  test('rejects empty Pi output with a clear error', () => {
+    expect(() => parseReviewResult('')).toThrow('Pi returned no review output');
+  });
 });

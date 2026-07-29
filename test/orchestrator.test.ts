@@ -116,6 +116,25 @@ describe('Orchestrator', () => {
     expect(await state.isHandled('PR_1', '2026-07-15T10:00:00Z')).toBe(false);
   });
 
+  test('backs off failed reviews for the same marker', async () => {
+    const state = new MemoryState();
+    const github = makeGithub([reviewRequest()]);
+    let piCalls = 0;
+    const pi: PiPort = {
+      async review() {
+        piCalls += 1;
+        throw new Error('pi failed');
+      },
+    };
+    const orchestrator = new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false });
+    const first = await orchestrator.runTick();
+    const second = await orchestrator.runTick();
+
+    expect(first.failed).toBe(1);
+    expect(second.skipped).toBe(1);
+    expect(piCalls).toBe(1);
+  });
+
   test('GitHub submission failures do not mark the marker handled', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);

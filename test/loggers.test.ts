@@ -59,6 +59,21 @@ describe('pretty logger', () => {
     expect(output).toContain('Approved: Jul 16, 2026, 12:40:21 PM UTC');
   });
 
+  test('renders multiline errors inside the terminal card', () => {
+    const output = formatPrettyEvent({
+      event: 'review_failed',
+      repo: 'acme/a',
+      number: 42,
+      title: 'Fix checkout flow',
+      url: 'https://github.com/acme/a/pull/42',
+      error: 'first line\nsecond line\nthird line',
+    });
+
+    expect(output).toContain('│ Error: first line');
+    expect(output).toContain('│ second line');
+    expect(output).toContain('│ third line');
+  });
+
   test('renders startup and tick summaries', () => {
     expect(formatStartup({ intervalMs: 60_000, concurrency: 3, dryRun: false, logFormat: 'pretty' })).toContain('pr-review-agent');
     expect(formatSummary({ reviewed: 2, skipped: 1, failed: 0, overlapped: false })).toContain('Reviewed: 2');

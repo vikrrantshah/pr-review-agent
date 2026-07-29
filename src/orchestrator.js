@@ -1,7 +1,9 @@
 import { formatReviewDecision, parseReviewResult } from './review-result.js';
 
+const FAILURE_RETRY_MS = 15 * 60 * 1000;
+
 export class Orchestrator {
-  constructor({ github, pi, state, localReview, dryRun = false, concurrency = 3, logger = console }) {
+  constructor({ github, pi, state, localReview, dryRun = false, concurrency = 3, logger = console } = {}) {
     this.github = github;
     this.pi = pi;
     this.state = state;
@@ -9,6 +11,7 @@ export class Orchestrator {
     this.dryRun = dryRun;
     this.concurrency = Math.max(1, Math.floor(concurrency));
     this.logger = logger;
+    this.failedUntil = new Map();
     this.running = false;
   }
 
@@ -57,6 +60,15 @@ export class Orchestrator {
       return;
     }
 
+    const key = reviewKey(request);
+    const retryAt = this.failedUntil.get(key);
+    if (retryAt && retryAt > Date.now()) {
+      summary.skipped += 1;
+      return;
+    }
+    this.failedUntil.delete(key);
+
+    let submitted = false;
     try {
       if (!this.dryRun && this.github.hasSubmittedReview && await this.github.hasSubmittedReview(request)) {
         await this.state.markHandled(request.id, request.marker);
@@ -78,6 +90,7 @@ export class Orchestrator {
 
       if (!this.dryRun) {
         await this.github.submitReview(request, decision);
+        submitted = true;
         await this.state.markHandled(request.id, request.marker);
       }
       summary.reviewed += 1;
@@ -87,6 +100,9 @@ export class Orchestrator {
         action: reviewAction(decision.event, this.dryRun),
       }));
     } catch (error) {
+      if (!submitted) {
+        this.failedUntil.set(key, Date.now() + FAILURE_RETRY_MS);
+      }
       summary.failed += 1;
       this.#log(reviewLogEvent('review_failed', request, { error: error.message }));
     }
@@ -119,6 +135,10 @@ function reviewLogEvent(event, request, details = {}) {
     url: request.url,
     ...details,
   };
+}
+
+function reviewKey(request) {
+  return `${request.id}:${request.marker}`;
 }
 
 function countFindings(findings) {

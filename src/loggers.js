@@ -1,3 +1,5 @@
+const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
 const ACTION_LABELS = {
   approved: 'APPROVED',
   request_changes: 'REQUEST CHANGES',
@@ -105,8 +107,12 @@ function prLabel(event) {
 }
 
 function card(title, lines) {
-  const body = lines.map((line) => `│ ${line}`).join('\n');
+  const body = lines.flatMap(cardLines).map((line) => `│ ${line}`).join('\n');
   return `╭─ ${title}\n${body}\n╰${'─'.repeat(72)}`;
+}
+
+function cardLines(line) {
+  return String(line).replace(ANSI_PATTERN, '').split('\n');
 }
 
 function actionColor(action) {
