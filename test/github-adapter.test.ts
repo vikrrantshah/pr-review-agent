@@ -277,6 +277,32 @@ describe('GitHubAdapter', () => {
     expect(calls.some((args) => args.join(' ').includes('/pulls/7/files'))).toBe(false);
   });
 
+  test('keeps prompts small by pointing Pi at the local diff', () => {
+    const adapter = new GitHubAdapter();
+    const prompt = adapter.buildPrompt({
+      pullRequest: {
+        id: 'PR_large',
+        marker: 'marker',
+        number: 9,
+        title: 'Large PR',
+        url: 'https://github.com/acme/a/pull/9',
+        baseRefName: 'main',
+        repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+      },
+      changedFiles: [
+        { path: 'src/app.ts', patch: `@@ -0,0 +1,2 @@\n+${'x'.repeat(50_000)}`, additions: new Set([1, 2]) },
+      ],
+      issueComments: [],
+      reviews: [],
+      reviewComments: [],
+      reviewThreads: [],
+    });
+
+    expect(prompt).toContain('git diff --unified=0 refs/remotes/origin/main...HEAD');
+    expect(prompt).toContain('- src/app.ts (2 added lines)');
+    expect(prompt).not.toContain('x'.repeat(1_000));
+  });
+
   test('fetches every REST page for pull request metadata', async () => {
     const calls: string[][] = [];
     const adapter = new GitHubAdapter({

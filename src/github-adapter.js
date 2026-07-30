@@ -97,7 +97,8 @@ query {
   }
 
   buildPrompt(context) {
-    const fileSections = context.changedFiles.map((file) => `### ${file.path}\n${file.patch || '(no patch available)'}`).join('\n\n');
+    const changedFiles = formatEntries(context.changedFiles, formatChangedFile);
+    const diffCommand = `git diff --unified=0 refs/remotes/origin/${context.pullRequest.baseRefName}...HEAD`;
     const issueComments = formatEntries(context.issueComments, (comment) => `- ${comment.author}: ${comment.body}`);
     const reviews = formatEntries(context.reviews, (review) => `- ${review.author} [${review.state}]: ${review.body}`);
     const reviewComments = formatEntries(context.reviewComments, (comment) => `- ${comment.author} on ${comment.path}:${comment.line ?? '?'}: ${comment.body}`);
@@ -113,6 +114,8 @@ Return only JSON in this shape:
 {"findings":[{"severity":"Critical|Important|Suggestion","path":"path/from/diff","line":123,"body":"specific review text"}]}
 
 Rules:
+- You are running inside the PR checkout worktree.
+- Inspect the local diff before deciding: ${diffCommand}
 - Use Critical for production-breaking correctness/security/data-loss blockers.
 - Use Important for defects that should block merge.
 - Use Suggestion only for non-blocking improvements.
@@ -130,8 +133,11 @@ ${reviewComments}
 ## Existing review threads and replies
 ${reviewThreads}
 
-## Diff
-${fileSections}
+## Local diff command
+${diffCommand}
+
+## Changed files
+${changedFiles}
 `;
   }
 
@@ -311,6 +317,11 @@ function formatEntries(entries, formatter) {
     return '(none)';
   }
   return entries.map(formatter).join('\n');
+}
+
+function formatChangedFile(file) {
+  const additions = file.additions.size;
+  return `- ${file.path} (${additions} added lines)`;
 }
 
 function escapeGraphql(value) {
