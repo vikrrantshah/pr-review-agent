@@ -5,12 +5,22 @@ import { join } from 'node:path';
 import { parseAddedLines } from './github-adapter.js';
 import { runProcess } from './process-runner.js';
 
+export const DEFAULT_GIT_TIMEOUT_MS = 30 * 60 * 1000;
+const GIT_TIMEOUT_ENV = 'PR_REVIEW_AGENT_GIT_TIMEOUT_MS';
+
 export class LocalReviewWorktree {
-  constructor({ run = runProcess, rootDir = join(tmpdir(), 'pr-review-agent-worktrees'), id = randomUUID, logger = console } = {}) {
+  constructor({
+    run = runProcess,
+    rootDir = join(tmpdir(), 'pr-review-agent-worktrees'),
+    id = randomUUID,
+    logger = console,
+    gitTimeoutMs = configuredTimeout(process.env[GIT_TIMEOUT_ENV], DEFAULT_GIT_TIMEOUT_MS),
+  } = {}) {
     this.run = run;
     this.rootDir = rootDir;
     this.id = id;
     this.logger = logger;
+    this.gitTimeoutMs = gitTimeoutMs;
   }
 
   async withCheckout(request, callback) {
@@ -24,25 +34,33 @@ export class LocalReviewWorktree {
     if (!base) {
       throw new Error(`baseRefName is required for ${request.repository.nameWithOwner}#${request.number}`);
     }
+    const timeoutMs = this.gitTimeoutMs;
     let failed = false;
+    let worktreeCreated = false;
 
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 });
-      await this.run('git', ['init', repoDir], undefined);
-      await this.run('git', ['remote', 'add', 'origin', remote], undefined, { cwd: repoDir });
+      await this.run('git', ['init', repoDir], undefined, { timeoutMs });
+      await this.run('git', ['remote', 'add', 'origin', remote], undefined, { cwd: repoDir, timeoutMs });
       const authEnv = await gitAuthEnv(this.run, dir);
-      await this.run('git', ['fetch', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`, `+refs/pull/${request.number}/head:refs/heads/${branch}`], undefined, { cwd: repoDir, env: authEnv });
-      await this.run('git', ['worktree', 'add', '--detach', worktreeDir, `refs/heads/${branch}`], undefined, { cwd: repoDir });
-      const diff = await this.run('git', ['diff', '--unified=0', `refs/remotes/origin/${base}...refs/heads/${branch}`], undefined, { cwd: repoDir });
+      await this.run('git', ['fetch', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`, `+refs/pull/${request.number}/head:refs/heads/${branch}`], undefined, { cwd: repoDir, env: authEnv, timeoutMs });
+      await this.run('git', ['worktree', 'add', '--detach', worktreeDir, `refs/heads/${branch}`], undefined, { cwd: repoDir, timeoutMs });
+      worktreeCreated = true;
+      const diff = await this.run('git', ['diff', '--unified=0', `refs/remotes/origin/${base}...refs/heads/${branch}`], undefined, { cwd: repoDir, timeoutMs });
 
       return await callback({ cwd: worktreeDir, changedFiles: parseLocalDiff(diff) });
     } catch (error) {
       failed = true;
       throw error;
     } finally {
-      await cleanup(this.run, repoDir, worktreeDir, dir, failed, this.logger);
+      await cleanup(this.run, repoDir, worktreeDir, dir, failed, worktreeCreated, timeoutMs, this.logger);
     }
   }
+}
+
+function configuredTimeout(value, fallback) {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 async function gitAuthEnv(run, dir) {
@@ -180,12 +198,14 @@ function decodeGitQuotedPath(path) {
   return result;
 }
 
-async function cleanup(run, repoDir, worktreeDir, dir, failed, logger) {
+async function cleanup(run, repoDir, worktreeDir, dir, failed, worktreeCreated, timeoutMs, logger) {
   let cleanupError;
-  try {
-    await run('git', ['worktree', 'remove', '--force', worktreeDir], undefined, { cwd: repoDir });
-  } catch (error) {
-    cleanupError = error;
+  if (worktreeCreated) {
+    try {
+      await run('git', ['worktree', 'remove', '--force', worktreeDir], undefined, { cwd: repoDir, timeoutMs });
+    } catch (error) {
+      cleanupError = error;
+    }
   }
   try {
     await rm(dir, { recursive: true, force: true });

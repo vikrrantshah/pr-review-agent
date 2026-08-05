@@ -110,6 +110,58 @@ describe('LocalReviewWorktree', () => {
     ]);
   });
 
+  test('runs git operations with the configured git timeout', async () => {
+    const rootDir = await tempRoot();
+    const timeouts: { args: string[]; timeoutMs: number | undefined }[] = [];
+    const local = new LocalReviewWorktree({
+      rootDir,
+      id: () => 'abc123',
+      gitTimeoutMs: 1234,
+      run: async (command, args, _input, options) => {
+        if (command === 'git') {
+          timeouts.push({ args, timeoutMs: options?.timeoutMs });
+        }
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
+        return '';
+      },
+    });
+
+    await local.withCheckout(request, async () => undefined);
+
+    const fetchCall = timeouts.find((call) => call.args[0] === 'fetch');
+    expect(fetchCall?.timeoutMs).toBe(1234);
+    expect(timeouts.every((call) => call.timeoutMs === 1234)).toBe(true);
+  });
+
+  test('skips worktree removal and does not warn when setup fails before the worktree exists', async () => {
+    const rootDir = await tempRoot();
+    const calls: RunCall[] = [];
+    const warnings: unknown[][] = [];
+    const fetchError = new Error('git timed out after 300000ms');
+    const local = new LocalReviewWorktree({
+      rootDir,
+      id: () => 'abc123',
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
+      run: async (command, args, input, options) => {
+        calls.push({ command, args, input, cwd: options?.cwd });
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
+        if (args[0] === 'fetch') {
+          throw fetchError;
+        }
+        return '';
+      },
+    });
+
+    await expect(local.withCheckout(request, async () => undefined)).rejects.toBe(fetchError);
+
+    expect(calls.some((call) => call.command === 'git' && call.args[0] === 'worktree' && call.args[1] === 'remove')).toBe(false);
+    expect(warnings).toHaveLength(0);
+  });
+
   test('authenticates local fetches with gh token through non-interactive askpass env', async () => {
     const rootDir = await tempRoot();
     const calls: RunCall[] = [];
