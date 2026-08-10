@@ -28,6 +28,37 @@ describe('review result parsing and decision formatting', () => {
     expect(decision.body).toContain('Rename for clarity.');
   });
 
+  test('Important findings no longer block merge but are still posted inline', () => {
+    const findings: ReviewFinding[] = [
+      { severity: 'Important', path: 'src/app.ts', line: 11, body: 'Authorization check is bypassed.' },
+      { severity: 'Suggestion', path: 'src/app.ts', line: 12, body: 'Rename for clarity.' },
+    ];
+
+    const decision = formatReviewDecision({ findings, changedFiles });
+
+    expect(decision.event).toBe('APPROVE');
+    expect(decision.comments).toEqual([
+      { path: 'src/app.ts', line: 11, body: 'Important: Authorization check is bypassed.' },
+    ]);
+    expect(decision.body.startsWith('LGTM 🚀')).toBe(true);
+    expect(decision.body).toContain('Rename for clarity.');
+  });
+
+  test('Important findings with invalid anchors approve and are preserved in the body', () => {
+    const decision = formatReviewDecision({
+      findings: [
+        { severity: 'Important', path: 'src/missing.ts', line: 99, body: 'Non-blocking defect without an anchor.' },
+      ],
+      changedFiles,
+    });
+
+    expect(decision.event).toBe('APPROVE');
+    expect(decision.comments).toEqual([]);
+    expect(decision.body).toContain('Important');
+    expect(decision.body).toContain('src/missing.ts:99');
+    expect(decision.body).toContain('Non-blocking defect without an anchor.');
+  });
+
   test('invalid anchors are preserved in the body instead of being dropped', () => {
     const decision = formatReviewDecision({
       findings: [

@@ -1,5 +1,8 @@
 const SEVERITIES = new Set(['Critical', 'Important', 'Suggestion']);
-const BLOCKING_SEVERITIES = new Set(['Critical', 'Important']);
+// Only Critical findings block a merge; Important findings are surfaced but not blocking.
+const BLOCKING_SEVERITIES = new Set(['Critical']);
+// Both Critical and Important are worth anchoring to an exact line when possible.
+const INLINE_SEVERITIES = new Set(['Critical', 'Important']);
 
 export function parseReviewResult(output) {
   if (typeof output !== 'string' || output.trim().length === 0) {
@@ -20,8 +23,10 @@ export function formatReviewDecision({ findings, changedFiles }) {
   const validAnchors = new Map(changedFiles.map((file) => [file.path, file.additions]));
   const comments = [];
   const bodySections = [];
-  const invalidBlockingFindings = [];
+  const unanchoredBlocking = [];
+  const unanchoredNonBlocking = [];
   const suggestions = [];
+  let hasBlocker = false;
 
   for (const finding of findings) {
     if (finding.severity === 'Suggestion') {
@@ -29,33 +34,42 @@ export function formatReviewDecision({ findings, changedFiles }) {
       continue;
     }
 
+    const blocking = BLOCKING_SEVERITIES.has(finding.severity);
+
     if (isValidAnchor(finding, validAnchors)) {
       comments.push({
         path: finding.path,
         line: finding.line,
         body: `${finding.severity}: ${finding.body}`,
       });
+      if (blocking) hasBlocker = true;
+    } else if (blocking) {
+      unanchoredBlocking.push(finding);
+      hasBlocker = true;
     } else {
-      invalidBlockingFindings.push(finding);
+      unanchoredNonBlocking.push(finding);
     }
   }
 
-  if (invalidBlockingFindings.length > 0) {
-    bodySections.push(['Blocking findings without valid inline anchors:', ...invalidBlockingFindings.map(formatFindingForBody)].join('\n'));
+  if (unanchoredBlocking.length > 0) {
+    bodySections.push(['Blocking findings without valid inline anchors:', ...unanchoredBlocking.map(formatFindingForBody)].join('\n'));
+  }
+
+  if (unanchoredNonBlocking.length > 0) {
+    bodySections.push(['Non-blocking findings without valid inline anchors:', ...unanchoredNonBlocking.map(formatFindingForBody)].join('\n'));
   }
 
   if (suggestions.length > 0) {
     bodySections.push(['Suggestions:', ...suggestions.map(formatFindingForBody)].join('\n'));
   }
 
-  const hasBlockers = comments.length > 0 || invalidBlockingFindings.length > 0;
-  if (hasBlockers) {
-    const body = bodySections.length > 0 ? bodySections.join('\n\n') : 'Requesting changes for the inline Critical/Important findings.';
+  if (hasBlocker) {
+    const body = bodySections.length > 0 ? bodySections.join('\n\n') : 'Requesting changes for the inline Critical findings.';
     return { event: 'REQUEST_CHANGES', body, comments };
   }
 
   const approvalBody = bodySections.length > 0 ? `LGTM 🚀\n\n${bodySections.join('\n\n')}` : 'LGTM 🚀';
-  return { event: 'APPROVE', body: approvalBody, comments: [] };
+  return { event: 'APPROVE', body: approvalBody, comments };
 }
 
 function extractJson(output) {
@@ -93,7 +107,7 @@ function normalizeFinding(finding, index) {
 }
 
 function isValidAnchor(finding, validAnchors) {
-  if (!BLOCKING_SEVERITIES.has(finding.severity) || !finding.path || !Number.isInteger(finding.line)) {
+  if (!INLINE_SEVERITIES.has(finding.severity) || !finding.path || !Number.isInteger(finding.line)) {
     return false;
   }
   return validAnchors.get(finding.path)?.has(finding.line) === true;

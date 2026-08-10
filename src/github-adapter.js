@@ -116,9 +116,12 @@ Return only JSON in this shape:
 Rules:
 - You are running inside the PR checkout worktree.
 - Inspect the local diff before deciding: ${diffCommand}
-- Use Critical for production-breaking correctness/security/data-loss blockers.
-- Use Important for defects that should block merge.
-- Use Suggestion only for non-blocking improvements.
+- Be lenient and pragmatic. Only report actionable defects introduced by this diff; when in doubt, downgrade the severity or omit the finding.
+- Do NOT nitpick style, naming, formatting, import ordering, test coverage preferences, or subjective/opinion-based matters. Assume the team's existing conventions are intentional.
+- Only Critical findings block the merge, so reserve Critical for concrete production-breaking correctness, security, or data-loss bugs you can point to in the diff. Be conservative: if you are not confident it breaks production, it is not Critical.
+- Use Important for clear, non-subjective defects worth fixing that do not block the merge.
+- Use Suggestion for everything else (minor, optional improvements). Prefer Suggestion whenever unsure.
+- Do not restate what the code does or hand out praise; only surface real problems.
 - Anchor findings to added lines in the diff whenever possible.
 
 ## Existing issue comments
