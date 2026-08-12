@@ -28,6 +28,10 @@ query {
         url
         headRefOid
         baseRefName
+        author { login }
+        additions
+        deletions
+        changedFiles
         repository { name nameWithOwner owner { login } }
         reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
         timelineItems(first: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) {
@@ -70,6 +74,11 @@ query {
         title: node.title,
         url: node.url,
         baseRefName: node.baseRefName,
+        author: loginOrUnknown(node.author),
+        requestedAt: directEvents.at(-1).createdAt,
+        additions: node.additions ?? 0,
+        deletions: node.deletions ?? 0,
+        changedFiles: node.changedFiles ?? 0,
         repository: { owner: repo.owner.login, repo: repo.name, nameWithOwner: repo.nameWithOwner },
       });
     }

@@ -103,6 +103,90 @@ describe('GitHubAdapter', () => {
     expect(requests[0]?.baseRefName).toBe('develop');
   });
 
+  test('includes the PR author, requested-at time, and size in review requests', async () => {
+    const graphqlInputs: string[] = [];
+    const adapter = new GitHubAdapter({
+      execGh: async (_args: string[], input?: string) => {
+        graphqlInputs.push(input ?? '');
+        return JSON.stringify({
+          data: {
+            viewer: { login: 'vikrant' },
+            search: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                {
+                  __typename: 'PullRequest',
+                  id: 'PR_meta',
+                  number: 12,
+                  title: 'Metadata PR',
+                  url: 'https://github.com/acme/meta/pull/12',
+                  headRefOid: 'head-meta',
+                  baseRefName: 'main',
+                  author: { login: 'kerrin' },
+                  additions: 120,
+                  deletions: 30,
+                  changedFiles: 5,
+                  repository: { owner: { login: 'acme' }, name: 'meta', nameWithOwner: 'acme/meta' },
+                  reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                  timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+                    { __typename: 'ReviewRequestedEvent', id: 'request-meta', createdAt: '2026-07-15T12:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                  ] },
+                },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(graphqlInputs[0]).toContain('author');
+    expect(graphqlInputs[0]).toContain('additions');
+    expect(graphqlInputs[0]).toContain('changedFiles');
+    expect(requests[0]).toMatchObject({
+      author: 'kerrin',
+      requestedAt: '2026-07-15T12:00:00Z',
+      additions: 120,
+      deletions: 30,
+      changedFiles: 5,
+    });
+  });
+
+  test('falls back to unknown author and zero size when GitHub omits them', async () => {
+    const adapter = new GitHubAdapter({
+      execGh: async () => JSON.stringify({
+        data: {
+          viewer: { login: 'vikrant' },
+          search: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                __typename: 'PullRequest',
+                id: 'PR_null_author',
+                number: 13,
+                title: 'Ghost author PR',
+                url: 'https://github.com/acme/meta/pull/13',
+                headRefOid: 'head-ghost',
+                baseRefName: 'main',
+                author: null,
+                repository: { owner: { login: 'acme' }, name: 'meta', nameWithOwner: 'acme/meta' },
+                reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'vikrant' } }] },
+                timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+                  { __typename: 'ReviewRequestedEvent', id: 'request-ghost', createdAt: '2026-07-15T13:00:00Z', requestedReviewer: { __typename: 'User', login: 'vikrant' } },
+                ] },
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    const requests = await adapter.listPersonalReviewRequests();
+
+    expect(requests[0]).toMatchObject({ author: 'unknown', additions: 0, deletions: 0, changedFiles: 0 });
+  });
+
   test('fetches every GraphQL search page for personal review requests', async () => {
     const graphqlInputs: string[] = [];
     const adapter = new GitHubAdapter({

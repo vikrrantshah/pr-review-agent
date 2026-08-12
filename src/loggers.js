@@ -62,6 +62,7 @@ export function formatPrettyEvent(event, { color = false } = {}) {
   if (event.event === 'review_started') {
     return card(formatHeading(`REVIEWING ${prLabel(event)}`, 'cyan', color), [
       ...timeLines('Started', event.timestamp),
+      ...prMetaLines(event),
       `Title: ${event.title}`,
       `URL:   ${event.url}`,
     ]);
@@ -70,6 +71,7 @@ export function formatPrettyEvent(event, { color = false } = {}) {
   if (event.event === 'review_completed') {
     return card(formatHeading(`${ACTION_LABELS[event.action] ?? event.action.toUpperCase()} ${prLabel(event)}`, actionColor(event.action), color), [
       ...timeLines(completionTimeLabel(event.action), event.timestamp),
+      ...prMetaLines(event),
       `Title: ${event.title}`,
       `Critical: ${event.critical}`,
       `Important: ${event.important}`,
@@ -81,6 +83,7 @@ export function formatPrettyEvent(event, { color = false } = {}) {
 
   if (event.event === 'review_failed') {
     return card(formatHeading(`FAILED ${prLabel(event)}`, 'red', color), [
+      ...prMetaLines(event),
       `Title: ${event.title}`,
       `Error: ${event.error}`,
       `URL:   ${event.url}`,
@@ -89,6 +92,7 @@ export function formatPrettyEvent(event, { color = false } = {}) {
 
   if (event.event === 'review_skipped') {
     return card(formatHeading(`SKIPPED ${prLabel(event)}`, 'yellow', color), [
+      ...prMetaLines(event),
       `Title:  ${event.title}`,
       `Reason: ${event.reason}`,
       `URL:    ${event.url}`,
@@ -104,6 +108,39 @@ export function formatPrettyEvent(event, { color = false } = {}) {
 
 function prLabel(event) {
   return `${event.repo}#${event.number}`;
+}
+
+// Author is shown whenever known; Age only when it can be computed (never a bogus duration).
+function prMetaLines(event) {
+  const lines = [];
+  if (event.author) {
+    lines.push(`Author: @${event.author}`);
+  }
+  const age = ageLabel(event);
+  if (age) {
+    lines.push(`Age: ${age}`);
+  }
+  return lines;
+}
+
+function ageLabel(event) {
+  if (!event.requestedAt || !event.timestamp) {
+    return undefined;
+  }
+  const ms = new Date(event.timestamp).getTime() - new Date(event.requestedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) {
+    return undefined;
+  }
+  const totalHours = Math.floor(ms / 3_600_000);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days > 0) {
+    return hours > 0 ? `waiting ${days}d ${hours}h` : `waiting ${days}d`;
+  }
+  if (hours > 0) {
+    return `waiting ${hours}h`;
+  }
+  return 'waiting <1h';
 }
 
 function card(title, lines) {

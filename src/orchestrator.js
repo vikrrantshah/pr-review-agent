@@ -133,6 +133,11 @@ function reviewLogEvent(event, request, details = {}) {
     number: request.number,
     title: request.title,
     url: request.url,
+    author: request.author,
+    requestedAt: request.requestedAt,
+    additions: request.additions,
+    deletions: request.deletions,
+    changedFiles: request.changedFiles,
     ...details,
   };
 }

@@ -11,6 +11,11 @@ function reviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewRequest {
     url: 'https://github.com/acme/a/pull/1',
     baseRefName: 'main',
     repository: { owner: 'acme', repo: 'a', nameWithOwner: 'acme/a' },
+    author: 'kerrin',
+    requestedAt: '2026-07-14T10:00:00Z',
+    additions: 42,
+    deletions: 7,
+    changedFiles: 3,
     ...overrides,
   };
 }
@@ -274,6 +279,11 @@ describe('Orchestrator', () => {
         number: 1,
         title: 'Test PR',
         url: 'https://github.com/acme/a/pull/1',
+        author: 'kerrin',
+        requestedAt: '2026-07-14T10:00:00Z',
+        additions: 42,
+        deletions: 7,
+        changedFiles: 3,
       }),
       expect.objectContaining({
         event: 'review_completed',
@@ -284,6 +294,11 @@ describe('Orchestrator', () => {
         suggestions: 1,
         commentsPosted: 1,
         action: 'request_changes',
+        author: 'kerrin',
+        requestedAt: '2026-07-14T10:00:00Z',
+        additions: 42,
+        deletions: 7,
+        changedFiles: 3,
       }),
     ]);
   });

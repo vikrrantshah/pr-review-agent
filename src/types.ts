@@ -33,6 +33,11 @@ export interface ReviewRequest {
   url: string;
   baseRefName: string;
   repository: RepositoryRef;
+  author?: string;
+  requestedAt?: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
 }
 
 export interface ReviewContext {

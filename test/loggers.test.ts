@@ -18,6 +18,58 @@ describe('pretty logger', () => {
     expect(output).toContain('URL:   https://github.com/acme/a/pull/42');
   });
 
+  test('renders the PR author and humanized age, keeping size out of the card', () => {
+    const output = formatPrettyEvent({
+      timestamp: '2026-07-16T12:30:21.729Z',
+      event: 'review_started',
+      repo: 'acme/a',
+      number: 42,
+      title: 'Fix checkout flow',
+      url: 'https://github.com/acme/a/pull/42',
+      author: 'kerrin',
+      requestedAt: '2026-07-13T08:30:21.729Z',
+      additions: 120,
+      deletions: 30,
+      changedFiles: 5,
+    });
+
+    expect(output).toContain('Author: @kerrin');
+    expect(output).toContain('Age: waiting 3d 4h');
+    expect(output).not.toContain('120');
+    expect(output).not.toContain('changedFiles');
+  });
+
+  test('omits the age line when the requested-at time is unavailable', () => {
+    const output = formatPrettyEvent({
+      timestamp: '2026-07-16T12:30:21.729Z',
+      event: 'review_failed',
+      repo: 'acme/a',
+      number: 42,
+      title: 'Fix checkout flow',
+      url: 'https://github.com/acme/a/pull/42',
+      author: 'kerrin',
+      error: 'boom',
+    });
+
+    expect(output).toContain('Author: @kerrin');
+    expect(output).not.toContain('Age:');
+  });
+
+  test('humanizes shorter waiting times', () => {
+    const base = {
+      timestamp: '2026-07-16T12:30:21.729Z',
+      event: 'review_started',
+      repo: 'acme/a',
+      number: 42,
+      title: 'Fix checkout flow',
+      url: 'https://github.com/acme/a/pull/42',
+      author: 'kerrin',
+    };
+
+    expect(formatPrettyEvent({ ...base, requestedAt: '2026-07-16T10:30:21.729Z' })).toContain('Age: waiting 2h');
+    expect(formatPrettyEvent({ ...base, requestedAt: '2026-07-16T12:05:21.729Z' })).toContain('Age: waiting <1h');
+  });
+
   test('renders review outcome counts and action', () => {
     const output = formatPrettyEvent({
       timestamp: '2026-07-16T12:35:21.729Z',
