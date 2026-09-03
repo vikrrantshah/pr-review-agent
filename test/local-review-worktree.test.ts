@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -133,6 +133,31 @@ describe('LocalReviewWorktree', () => {
     const fetchCall = timeouts.find((call) => call.args[0] === 'fetch');
     expect(fetchCall?.timeoutMs).toBe(1234);
     expect(timeouts.every((call) => call.timeoutMs === 1234)).toBe(true);
+  });
+
+  test('removes stale checkout dirs without touching recent ones', async () => {
+    const rootDir = await tempRoot();
+    const staleDir = join(rootDir, 'old-pr');
+    const recentDir = join(rootDir, 'active-pr');
+    await mkdir(staleDir, { recursive: true });
+    await mkdir(recentDir, { recursive: true });
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await utimes(staleDir, staleTime, staleTime);
+    const local = new LocalReviewWorktree({
+      rootDir,
+      id: () => 'abc123',
+      run: async (command, args) => {
+        if (command === 'gh' && args[0] === 'auth' && args[1] === 'token') {
+          return 'fake-token\n';
+        }
+        return '';
+      },
+    });
+
+    await local.withCheckout(request, async () => undefined);
+
+    await expect(stat(staleDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(recentDir)).resolves.toBeTruthy();
   });
 
   test('skips worktree removal and does not warn when setup fails before the worktree exists', async () => {

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAddedLines } from './github-adapter.js';
 import { runProcess } from './process-runner.js';
 
 export const DEFAULT_GIT_TIMEOUT_MS = 30 * 60 * 1000;
+const STALE_CHECKOUT_MS = 24 * 60 * 60 * 1000;
 const GIT_TIMEOUT_ENV = 'PR_REVIEW_AGENT_GIT_TIMEOUT_MS';
 
 export class LocalReviewWorktree {
@@ -37,6 +38,7 @@ export class LocalReviewWorktree {
     const timeoutMs = this.gitTimeoutMs;
     let failed = false;
     let worktreeCreated = false;
+    await pruneStaleCheckouts(this.rootDir, Date.now(), this.logger);
 
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -196,6 +198,34 @@ function decodeGitQuotedPath(path) {
 
   flushBytes();
   return result;
+}
+
+async function pruneStaleCheckouts(rootDir, now, logger) {
+  let entries;
+  try {
+    entries = await readdir(rootDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      logger.warn('stale checkout scan failed', error);
+    }
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const dir = join(rootDir, entry.name);
+    try {
+      if (now - (await stat(dir)).mtimeMs >= STALE_CHECKOUT_MS) {
+        await rm(dir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        logger.warn('stale checkout cleanup failed', error);
+      }
+    }
+  }
 }
 
 async function cleanup(run, repoDir, worktreeDir, dir, failed, worktreeCreated, timeoutMs, logger) {
