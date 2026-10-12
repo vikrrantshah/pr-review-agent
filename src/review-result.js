@@ -6,12 +6,12 @@ const INLINE_SEVERITIES = new Set(['Critical', 'Important']);
 
 export function parseReviewResult(output) {
   if (typeof output !== 'string' || output.trim().length === 0) {
-    throw new Error('Pi returned no review output');
+    throw new Error('omp returned no review output');
   }
   const jsonText = extractJson(output);
   const parsed = JSON.parse(jsonText);
   if (!Array.isArray(parsed.findings)) {
-    throw new Error('Pi output must contain a findings array');
+    throw new Error('omp output must contain a findings array');
   }
 
   return {

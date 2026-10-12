@@ -62,7 +62,7 @@ export interface GitHubPort {
   hasSubmittedReview?(request: ReviewRequest): Promise<boolean>;
 }
 
-export interface PiPort {
+export interface OmpPort {
   review(prompt: string, options?: { cwd?: string }): Promise<string>;
 }
 

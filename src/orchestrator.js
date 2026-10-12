@@ -3,9 +3,9 @@ import { formatReviewDecision, parseReviewResult } from './review-result.js';
 const FAILURE_RETRY_MS = 15 * 60 * 1000;
 
 export class Orchestrator {
-  constructor({ github, pi, state, localReview, dryRun = false, concurrency = 3, logger = console } = {}) {
+  constructor({ github, omp, state, localReview, dryRun = false, concurrency = 3, logger = console } = {}) {
     this.github = github;
-    this.pi = pi;
+    this.omp = omp;
     this.state = state;
     this.localReview = localReview;
     this.dryRun = dryRun;
@@ -81,7 +81,7 @@ export class Orchestrator {
       const { decision, counts } = await this.localReview.withCheckout(request, async (checkout) => {
         const context = { ...metadata, changedFiles: checkout.changedFiles };
         const prompt = this.github.buildPrompt(context);
-        const result = parseReviewResult(await this.pi.review(prompt, { cwd: checkout.cwd }));
+        const result = parseReviewResult(await this.omp.review(prompt, { cwd: checkout.cwd }));
         return {
           decision: formatReviewDecision({ findings: result.findings, changedFiles: context.changedFiles }),
           counts: countFindings(result.findings),

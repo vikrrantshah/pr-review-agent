@@ -13,15 +13,15 @@ describe('parseArgs', () => {
   test('accepts JSON log output for machine-readable logs', () => {
     expect(parseArgs(['--log-format', 'json'])).toEqual({ dryRun: false, once: false, intervalMs: 60_000, concurrency: 3, logFormat: 'json' });
   });
-  test('accepts custom Pi model and thinking flags', () => {
-    expect(parseArgs(['--pi-model', 'anthropic/claude-sonnet-4-5', '--pi-thinking', 'high'])).toEqual({
+  test('accepts custom omp model and thinking flags', () => {
+    expect(parseArgs(['--omp-model', 'anthropic/claude-sonnet-4-5', '--omp-thinking', 'high'])).toEqual({
       dryRun: false,
       once: false,
       intervalMs: 60_000,
       concurrency: 3,
       logFormat: 'pretty',
-      piModel: 'anthropic/claude-sonnet-4-5',
-      piThinking: 'high',
+      ompModel: 'anthropic/claude-sonnet-4-5',
+      ompThinking: 'high',
     });
   });
 });

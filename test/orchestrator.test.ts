@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Orchestrator } from '../src/orchestrator.js';
-import type { ChangedFile, GitHubPort, PiPort, ReviewRequest, StatePort } from '../src/types.js';
+import type { ChangedFile, GitHubPort, OmpPort, ReviewRequest, StatePort } from '../src/types.js';
 
 function reviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewRequest {
   return {
@@ -68,9 +68,9 @@ describe('Orchestrator', () => {
     const state = new MemoryState();
     await state.markHandled('PR_1', 'old-marker');
     const github = makeGithub([reviewRequest({ marker: 'old-marker' }), reviewRequest({ marker: 'new-marker' })]);
-    const pi: PiPort = { async review() { return '{"findings":[]}'; } };
+    const omp: OmpPort = { async review() { return '{"findings":[]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, omp, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.reviewed).toBe(1);
     expect(result.skipped).toBe(1);
@@ -78,7 +78,7 @@ describe('Orchestrator', () => {
     expect(await state.isHandled('PR_1', 'new-marker')).toBe(true);
   });
 
-  test('runs Pi from the local PR worktree with checkout files', async () => {
+  test('runs omp from the local PR worktree with checkout files', async () => {
     const github = makeGithub([reviewRequest()]);
     const state = new MemoryState();
     const checkoutChangedFiles: ChangedFile[] = [{ path: 'src/app.ts', patch: '@@ -0,0 +1 @@\n+ok();', additions: new Set([1]) }];
@@ -92,29 +92,29 @@ describe('Orchestrator', () => {
       promptChangedFiles = context.changedFiles;
       return 'prompt';
     };
-    const piCalls: Array<{ cwd: string | undefined }> = [];
-    const pi: PiPort = {
+    const ompCalls: Array<{ cwd: string | undefined }> = [];
+    const omp: OmpPort = {
       async review(_prompt, options) {
-        piCalls.push({ cwd: options?.cwd });
+        ompCalls.push({ cwd: options?.cwd });
         return '{"findings":[]}';
       },
     };
 
-    const result = await new Orchestrator({ github, pi, state, localReview, dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, omp, state, localReview, dryRun: false }).runTick();
 
-    expect({ reviewed: result.reviewed, promptChangedFiles, piCalls }).toEqual({
+    expect({ reviewed: result.reviewed, promptChangedFiles, ompCalls }).toEqual({
       reviewed: 1,
       promptChangedFiles: checkoutChangedFiles,
-      piCalls: [{ cwd: '/tmp/pr-worktree' }],
+      ompCalls: [{ cwd: '/tmp/pr-worktree' }],
     });
   });
 
   test('toolkit failures do not mark the marker handled', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);
-    const pi: PiPort = { async review() { throw new Error('pi failed'); } };
+    const omp: OmpPort = { async review() { throw new Error('omp failed'); } };
 
-    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, omp, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.failed).toBe(1);
     expect(github.submitted).toHaveLength(0);
@@ -124,29 +124,29 @@ describe('Orchestrator', () => {
   test('backs off failed reviews for the same marker', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);
-    let piCalls = 0;
-    const pi: PiPort = {
+    let ompCalls = 0;
+    const omp: OmpPort = {
       async review() {
-        piCalls += 1;
-        throw new Error('pi failed');
+        ompCalls += 1;
+        throw new Error('omp failed');
       },
     };
-    const orchestrator = new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false });
+    const orchestrator = new Orchestrator({ github, omp, state, localReview: makeLocalReview(), dryRun: false });
     const first = await orchestrator.runTick();
     const second = await orchestrator.runTick();
 
     expect(first.failed).toBe(1);
     expect(second.skipped).toBe(1);
-    expect(piCalls).toBe(1);
+    expect(ompCalls).toBe(1);
   });
 
   test('GitHub submission failures do not mark the marker handled', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);
     github.submitReview = async () => { throw new Error('gh failed'); };
-    const pi: PiPort = { async review() { return '{"findings":[]}'; } };
+    const omp: OmpPort = { async review() { return '{"findings":[]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: false }).runTick();
+    const result = await new Orchestrator({ github, omp, state, localReview: makeLocalReview(), dryRun: false }).runTick();
 
     expect(result.failed).toBe(1);
     expect(await state.isHandled('PR_1', '2026-07-15T10:00:00Z')).toBe(false);
@@ -162,11 +162,11 @@ describe('Orchestrator', () => {
         throw new Error('cleanup failed');
       },
     };
-    const pi: PiPort = { async review() { return '{"findings":[]}'; } };
+    const omp: OmpPort = { async review() { return '{"findings":[]}'; } };
 
     const result = await new Orchestrator({
       github,
-      pi,
+      omp,
       state,
       localReview,
       dryRun: false,
@@ -182,9 +182,9 @@ describe('Orchestrator', () => {
   test('dry-run submits nothing and leaves state unhandled', async () => {
     const state = new MemoryState();
     const github = makeGithub([reviewRequest()]);
-    const pi: PiPort = { async review() { return '{"findings":[{"severity":"Important","path":"src/app.ts","line":10,"body":"Fix it."}]}'; } };
+    const omp: OmpPort = { async review() { return '{"findings":[{"severity":"Important","path":"src/app.ts","line":10,"body":"Fix it."}]}'; } };
 
-    const result = await new Orchestrator({ github, pi, state, localReview: makeLocalReview(), dryRun: true }).runTick();
+    const result = await new Orchestrator({ github, omp, state, localReview: makeLocalReview(), dryRun: true }).runTick();
 
     expect(result.reviewed).toBe(1);
     expect(github.submitted).toHaveLength(0);
@@ -200,7 +200,7 @@ describe('Orchestrator', () => {
       await releaseGate.promise;
       return [];
     };
-    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false });
+    const orchestrator = new Orchestrator({ github, omp: { async review() { return '{"findings":[]}'; } }, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false });
     const first = orchestrator.runTick();
     await started.promise;
     const second = await orchestrator.runTick();
@@ -236,7 +236,7 @@ describe('Orchestrator', () => {
       github.submitted.push(decision);
       submittedReviewExists = true;
     };
-    const orchestrator = new Orchestrator({ github, pi: { async review() { return '{"findings":[]}'; } }, state, localReview: makeLocalReview(), dryRun: false });
+    const orchestrator = new Orchestrator({ github, omp: { async review() { return '{"findings":[]}'; } }, state, localReview: makeLocalReview(), dryRun: false });
 
     const first = await orchestrator.runTick();
     const second = await orchestrator.runTick();
@@ -251,7 +251,7 @@ describe('Orchestrator', () => {
   test('logs PR review IO with finding counts, posted comments, and action', async () => {
     const logs: unknown[] = [];
     const github = makeGithub([reviewRequest()]);
-    const pi: PiPort = {
+    const omp: OmpPort = {
       async review() {
         return JSON.stringify({
           findings: [
@@ -265,7 +265,7 @@ describe('Orchestrator', () => {
 
     await new Orchestrator({
       github,
-      pi,
+      omp,
       state: new MemoryState(),
       localReview: makeLocalReview(),
       dryRun: false,
@@ -319,7 +319,7 @@ describe('Orchestrator', () => {
       reviewComments: [],
       reviewThreads: [],
     });
-    const pi: PiPort = {
+    const omp: OmpPort = {
       async review() {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -329,7 +329,7 @@ describe('Orchestrator', () => {
       },
     };
 
-    const result = await new Orchestrator({ github, pi, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false, concurrency: 2 }).runTick();
+    const result = await new Orchestrator({ github, omp, state: new MemoryState(), localReview: makeLocalReview(), dryRun: false, concurrency: 2 }).runTick();
 
     expect(result.reviewed).toBe(3);
     expect(maxInFlight).toBe(2);

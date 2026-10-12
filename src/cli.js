@@ -4,7 +4,7 @@ import { createLogger, formatStartup, formatSummary } from './loggers.js';
 import { GitHubAdapter } from './github-adapter.js';
 import { Orchestrator } from './orchestrator.js';
 import { LocalReviewWorktree } from './local-review-worktree.js';
-import { PiAdapter } from './pi-adapter.js';
+import { OmpAdapter } from './omp-adapter.js';
 import { StateStore } from './state-store.js';
 
 async function main() {
@@ -12,7 +12,7 @@ async function main() {
   const logger = createLogger({ format: options.logFormat, color: process.stdout.isTTY });
   const orchestrator = new Orchestrator({
     github: new GitHubAdapter(),
-    pi: new PiAdapter({ model: options.piModel, thinking: options.piThinking }),
+    omp: new OmpAdapter({ model: options.ompModel, thinking: options.ompThinking }),
     state: new StateStore(),
     localReview: new LocalReviewWorktree(),
     dryRun: options.dryRun,
@@ -68,19 +68,19 @@ export function parseArgs(args) {
       }
       options.logFormat = value;
       index += 1;
-    } else if (arg === '--pi-model') {
+    } else if (arg === '--omp-model') {
       const value = args[index + 1];
       if (!value) {
-        throw new Error('--pi-model requires a model name');
+        throw new Error('--omp-model requires a model name');
       }
-      options.piModel = value;
+      options.ompModel = value;
       index += 1;
-    } else if (arg === '--pi-thinking') {
+    } else if (arg === '--omp-thinking') {
       const value = args[index + 1];
-      if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value)) {
-        throw new Error('--pi-thinking requires off, minimal, low, medium, high, xhigh, or max');
+      if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto'].includes(value)) {
+        throw new Error('--omp-thinking requires off, minimal, low, medium, high, xhigh, max, or auto');
       }
-      options.piThinking = value;
+      options.ompThinking = value;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);

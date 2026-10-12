@@ -96,7 +96,7 @@ describe('review result parsing and decision formatting', () => {
     ]);
   });
 
-  test('rejects empty Pi output with a clear error', () => {
-    expect(() => parseReviewResult('')).toThrow('Pi returned no review output');
+  test('rejects empty omp output with a clear error', () => {
+    expect(() => parseReviewResult('')).toThrow('omp returned no review output');
   });
 });

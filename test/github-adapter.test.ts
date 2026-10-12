@@ -361,7 +361,7 @@ describe('GitHubAdapter', () => {
     expect(calls.some((args) => args.join(' ').includes('/pulls/7/files'))).toBe(false);
   });
 
-  test('keeps prompts small by pointing Pi at the local diff', () => {
+  test('keeps prompts small by pointing omp at the local diff', () => {
     const adapter = new GitHubAdapter();
     const prompt = adapter.buildPrompt({
       pullRequest: {

@@ -1,21 +1,21 @@
 import { runProcess } from './process-runner.js';
 
-export const DEFAULT_PI_TIMEOUT_MS = 60 * 60 * 1000;
-export const DEFAULT_PI_MODEL = 'openai-codex/gpt-5.5';
-export const DEFAULT_PI_FALLBACK_MODEL = 'anthropic/claude-sonnet-4-5';
-export const DEFAULT_PI_THINKING = 'xhigh';
-const MODEL_ENV = 'PR_REVIEW_AGENT_PI_MODEL';
-const FALLBACK_MODEL_ENV = 'PR_REVIEW_AGENT_PI_FALLBACK_MODEL';
-const THINKING_ENV = 'PR_REVIEW_AGENT_PI_THINKING';
+export const DEFAULT_OMP_TIMEOUT_MS = 60 * 60 * 1000;
+export const DEFAULT_OMP_MODEL = 'openai-codex/gpt-5.5';
+export const DEFAULT_OMP_FALLBACK_MODEL = 'anthropic/claude-sonnet-4-5';
+export const DEFAULT_OMP_THINKING = 'xhigh';
+const MODEL_ENV = 'PR_REVIEW_AGENT_OMP_MODEL';
+const FALLBACK_MODEL_ENV = 'PR_REVIEW_AGENT_OMP_FALLBACK_MODEL';
+const THINKING_ENV = 'PR_REVIEW_AGENT_OMP_THINKING';
 const USAGE_LIMIT_PATTERN = /usage limit|rate limit|quota|\b429\b/i;
 
-export class PiAdapter {
+export class OmpAdapter {
   constructor({
     run = runProcess,
-    timeoutMs = DEFAULT_PI_TIMEOUT_MS,
-    model = configuredValue(process.env[MODEL_ENV], DEFAULT_PI_MODEL),
-    fallbackModel = configuredValue(process.env[FALLBACK_MODEL_ENV], DEFAULT_PI_FALLBACK_MODEL),
-    thinking = configuredValue(process.env[THINKING_ENV], DEFAULT_PI_THINKING),
+    timeoutMs = DEFAULT_OMP_TIMEOUT_MS,
+    model = configuredValue(process.env[MODEL_ENV], DEFAULT_OMP_MODEL),
+    fallbackModel = configuredValue(process.env[FALLBACK_MODEL_ENV], DEFAULT_OMP_FALLBACK_MODEL),
+    thinking = configuredValue(process.env[THINKING_ENV], DEFAULT_OMP_THINKING),
   } = {}) {
     this.run = run;
     this.timeoutMs = timeoutMs;
@@ -42,7 +42,7 @@ export class PiAdapter {
   }
 
   #runModel(model, prompt, cwd) {
-    return this.run('pi', this.#args(model), prompt, { timeoutMs: this.timeoutMs, cwd, requireStdout: true });
+    return this.run('omp', this.#args(model), prompt, { timeoutMs: this.timeoutMs, cwd, requireStdout: true });
   }
 
   #args(model) {
