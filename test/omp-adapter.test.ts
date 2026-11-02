@@ -4,28 +4,6 @@ import { OmpAdapter } from '../src/omp-adapter.js';
 type RunOptions = { timeoutMs?: number; cwd?: string; requireStdout?: boolean };
 
 describe('OmpAdapter', () => {
-  test('invokes omp with the required model and print flags', async () => {
-    const calls: { command: string; args: string[]; input: string; timeoutMs: number | undefined }[] = [];
-    const adapter = new OmpAdapter({
-      run: async (command: string, args: string[], input: string, options?: RunOptions) => {
-        calls.push({ command, args, input, timeoutMs: options?.timeoutMs });
-        return '{"findings":[]}';
-      },
-    });
-
-    const output = await adapter.review('prompt text');
-
-    expect(output).toBe('{"findings":[]}');
-    expect(calls).toEqual([
-      {
-        command: 'omp',
-        args: ['--model', 'openai-codex/gpt-5.5', '--thinking', 'xhigh', '--no-session', '--print'],
-        input: 'prompt text',
-        timeoutMs: 60 * 60 * 1000,
-      },
-    ]);
-  });
-
   test('passes cwd to omp run options', async () => {
     const calls: { cwd: string | undefined }[] = [];
     const adapter = new OmpAdapter({

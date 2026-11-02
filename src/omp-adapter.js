@@ -1,7 +1,7 @@
 import { runProcess } from './process-runner.js';
 
 export const DEFAULT_OMP_TIMEOUT_MS = 60 * 60 * 1000;
-export const DEFAULT_OMP_MODEL = 'openai-codex/gpt-5.5';
+export const DEFAULT_OMP_MODEL = 'openai-codex/gpt-6.1-sol';
 export const DEFAULT_OMP_FALLBACK_MODEL = 'anthropic/claude-sonnet-4-5';
 export const DEFAULT_OMP_THINKING = 'xhigh';
 const MODEL_ENV = 'PR_REVIEW_AGENT_OMP_MODEL';

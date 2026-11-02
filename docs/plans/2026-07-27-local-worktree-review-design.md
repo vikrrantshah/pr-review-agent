@@ -39,6 +39,12 @@ review request
   -> cleanup worktree
 ```
 
+## Current Review Model
+
+`OmpAdapter` invokes `omp` in the PR worktree with default model `openai-codex/gpt-6.1-sol` and `xhigh` thinking. The usage-limit fallback remains `anthropic/claude-sonnet-4-5`.
+
+Override the model with `--omp-model` or `PR_REVIEW_AGENT_OMP_MODEL`; override thinking with `--omp-thinking` or `PR_REVIEW_AGENT_OMP_THINKING`. CLI options take precedence over environment variables, which take precedence over built-in defaults. Restart a running reviewer to pick up the changed default, and remove any older model override if the new default should apply.
+
 ## Error Handling
 
 - Worktree creation/fetch failures fail that PR review and leave other PRs running.
